@@ -14,3 +14,54 @@ jobs:
       working-directory: "."
       enable-cache: true
       publish-crates-io: false
+
+  prepare:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: |
+      github.repository_owner == 'iExecBlockchainComputing' &&
+      (github.ref_name == 'main' ||
+       startsWith(github.head_ref, 'feature/') ||
+       startsWith(github.head_ref, 'bugfix/') ||
+       (github.event_name == 'workflow_dispatch' && (startsWith(github.ref_name, 'feature/') || startsWith(github.ref_name, 'bugfix/'))))
+    outputs:
+      image_tag: ${{ steps.determine-tag.outputs.image_tag }}
+    steps:
+      - name: Determine base tag
+        id: determine-tag
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ] ; then
+            SHORT_SHA="$(echo ${{ github.event.pull_request.head.sha }} | cut -c1-8)"
+            GIT_BRANCH="${{ github.head_ref }}"
+          else
+            SHORT_SHA="$(echo ${{ github.sha }} | cut -c1-8)"
+            GIT_BRANCH="${{ github.ref_name }}"
+          fi
+
+          if [ "${{ github.ref_name }}" = "main" ] ; then
+            echo "Processing main branch"
+            echo "image_tag=dev-${SHORT_SHA}" | tee -a $GITHUB_OUTPUT
+          else
+            # This covers feature/ and bugfix/ branches
+            echo "Processing feature/bugfix branch $GIT_BRANCH"
+            echo "image_tag=feature-${SHORT_SHA}" | tee -a $GITHUB_OUTPUT
+          fi
+
+  build-oci-image:
+    name: Build OCI image
+    needs: prepare
+    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build.yml@docker-build-v2.4.0
+    with:
+      image-name: docker-regis.iex.ec/nox-handle-gateway
+      image-tag: ${{ needs.prepare.outputs.image_tag }}
+      dockerfile: Dockerfile
+      context: .
+      registry: docker-regis.iex.ec
+      push: true
+      security-scan: true
+      security-report: "table"
+      hadolint: true
+      platforms: linux/amd64
+    secrets:
+      username: ${{ secrets.NEXUS_USERNAME }}
+      password: ${{ secrets.NEXUS_PASSWORD }}
