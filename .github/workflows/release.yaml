@@ -1,0 +1,18 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    # Prevent execution on forks
+    if: github.repository_owner == 'iExecBlockchainComputing'
+    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/release-please.yml@release-please-v2.0.0
+    secrets: inherit
