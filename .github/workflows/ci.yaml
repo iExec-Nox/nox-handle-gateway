@@ -1,0 +1,16 @@
+name: Rust CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/rust-build.yml@rust-build-v2.0.0
+    with:
+      rust-version: '1.92.0'
+      working-directory: "."
+      enable-cache: true
+      publish-crates-io: false
