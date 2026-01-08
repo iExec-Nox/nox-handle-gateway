@@ -24,7 +24,7 @@ impl Server {
             .allow_origin(tower_http::cors::Any);
 
         Router::new()
-            .route("/", get(Self::health_check))
+            .route("/", get(Self::root))
             .route("/health", get(Self::health_check))
             .layer(TraceLayer::new_for_http())
             .layer(cors)
@@ -44,9 +44,11 @@ impl Server {
     }
 
     async fn health_check() -> Json<Value> {
-        debug!("Health check requested");
+        Json(json!({"status": "ok"}))
+    }
+
+    async fn root() -> Json<Value> {
         Json(json!({
-            "status": "ok",
             "service": "nox-handle-gateway",
             "timestamp": Utc::now().to_rfc3339()
         }))

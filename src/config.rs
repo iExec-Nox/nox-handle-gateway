@@ -1,27 +1,37 @@
-use std::env;
+use config::{Config as ConfigBuilder, ConfigError, Environment};
+use serde::Deserialize;
 use tracing::debug;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Config {
-    pub host: String,
-    pub port: u16,
+    pub server: ServerConfig,
     pub log_level: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ServerConfig {
+    pub host: String,
+    pub port: u16,
+}
+
 impl Config {
-    pub fn from_env() -> Self {
-        Self {
-            host: env::var("NOX_GATEWAY_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
-            port: env::var("NOX_GATEWAY_PORT")
-                .unwrap_or_else(|_| "3000".to_string())
-                .parse()
-                .unwrap_or(3000),
-            log_level: env::var("NOX_GATEWAY_LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
-        }
+    pub fn load() -> Result<Self, ConfigError> {
+        let config = ConfigBuilder::builder()
+            .set_default("server.host", "0.0.0.0")?
+            .set_default("server.port", 3000)?
+            .set_default("log_level", "info")?
+            .add_source(
+                Environment::with_prefix("NOX_GATEWAY")
+                    .prefix_separator("_")
+                    .separator("__"),
+            )
+            .build()?;
+
+        config.try_deserialize()
     }
 
     pub fn bind_addr(&self) -> String {
-        let addr = format!("{}:{}", self.host, self.port);
+        let addr = format!("{}:{}", self.server.host, self.server.port);
         debug!("Binding address: {}", addr);
         addr
     }

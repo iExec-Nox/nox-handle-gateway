@@ -9,7 +9,10 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config = Config::from_env();
+    let config = Config::load().map_err(|e| {
+        eprintln!("Failed to load configuration: {e}");
+        e
+    })?;
     debug!("Configuration loaded: {:?}", config);
 
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
