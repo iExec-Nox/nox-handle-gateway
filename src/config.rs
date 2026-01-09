@@ -19,7 +19,7 @@ impl Config {
             .set_default("server.host", "0.0.0.0")?
             .set_default("server.port", 3000)?
             .add_source(
-                Environment::with_prefix("NOX_GATEWAY")
+                Environment::with_prefix("NOX_HANDLE_GATEWAY")
                     .prefix_separator("_")
                     .separator("__"),
             )
