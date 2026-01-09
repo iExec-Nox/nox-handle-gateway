@@ -5,7 +5,6 @@ use tracing::debug;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
-    pub log_level: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -19,7 +18,6 @@ impl Config {
         let config = ConfigBuilder::builder()
             .set_default("server.host", "0.0.0.0")?
             .set_default("server.port", 3000)?
-            .set_default("log_level", "info")?
             .add_source(
                 Environment::with_prefix("NOX_GATEWAY")
                     .prefix_separator("_")
