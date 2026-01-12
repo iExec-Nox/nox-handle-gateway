@@ -1,4 +1,7 @@
-use axum::{Json, Router, routing::get};
+use axum::{
+    Json, Router,
+    routing::{get, post},
+};
 use chrono::Utc;
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, signal};
@@ -6,6 +9,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{debug, info, warn};
 
 use crate::config::Config;
+use crate::handlers;
 
 pub struct Server {
     config: Config,
@@ -20,12 +24,17 @@ impl Server {
         debug!("Building application router");
 
         let cors = CorsLayer::permissive()
-            .allow_methods([axum::http::Method::GET, axum::http::Method::OPTIONS])
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::OPTIONS,
+            ])
             .allow_origin(tower_http::cors::Any);
 
         Router::new()
             .route("/", get(Self::root))
             .route("/health", get(Self::health_check))
+            .route("/v0/secrets", post(handlers::create_handle))
             .layer(TraceLayer::new_for_http())
             .layer(cors)
     }
