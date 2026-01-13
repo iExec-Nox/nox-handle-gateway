@@ -1305,6 +1305,7 @@ dependencies = [
  "config",
  "serde",
  "serde_json",
+ "sha3",
  "thiserror",
  "tokio",
  "tower-http",

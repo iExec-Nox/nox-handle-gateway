@@ -1,8 +1,203 @@
-use alloy_primitives::Address;
-use serde::{Deserialize, Serialize};
+use alloy_primitives::{Address, hex};
+use serde::{Deserialize, Serialize, Serializer};
+use sha3::{Digest, Keccak256};
 use std::str::FromStr;
 
 use crate::error::AppError;
+
+const HANDLE_VERSION: u8 = 0x00; // V0
+
+/// Value type for encrypted data
+///
+/// Encoding (byte 30 of handle):
+/// - 0-3: Special types (bool, address, bytes, string)
+/// - 4-35: uint8..uint256 (32 types)
+/// - 36-67: int8..int256 (32 types)
+/// - 68-99: bytes1..bytes32 (32 types)
+/// - 100-255: Reserved
+#[derive(Debug, Clone, PartialEq)]
+pub enum ValueType {
+    // Special types (0-3)
+    Bool,
+    Address,
+    Bytes,
+    String,
+    // Unsigned integers (4-35)
+    Uint(u16),
+    // Signed integers (36-67)
+    Int(u16),
+    // Fixed-size bytes (68-99)
+    FixedBytes(u8),
+}
+
+impl ValueType {
+    pub fn to_byte(&self) -> u8 {
+        match self {
+            ValueType::Bool => 0,
+            ValueType::Address => 1,
+            ValueType::Bytes => 2,
+            ValueType::String => 3,
+            ValueType::Uint(bits) => {
+                // uint8 = 4, uint16 = 5, ..., uint256 = 35
+                // Formula: 4 + (bits / 8 - 1)
+                4 + (bits / 8 - 1) as u8
+            }
+            ValueType::Int(bits) => {
+                // int8 = 36, int16 = 37, ..., int256 = 67
+                // Formula: 36 + (bits / 8 - 1)
+                36 + (bits / 8 - 1) as u8
+            }
+            ValueType::FixedBytes(size) => {
+                // bytes1 = 68, bytes2 = 69, ..., bytes32 = 99
+                // Formula: 68 + size
+                67 + size
+            }
+        }
+    }
+}
+
+impl FromStr for ValueType {
+    type Err = AppError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "bool" => Ok(ValueType::Bool),
+            "address" => Ok(ValueType::Address),
+            "bytes" => Ok(ValueType::Bytes),
+            "string" => Ok(ValueType::String),
+            s if s.starts_with("uint") => {
+                let bits: u16 = s[4..]
+                    .parse()
+                    .map_err(|_| AppError::InvalidType(format!("invalid uint size: {s}")))?;
+                if !(8..=256).contains(&bits) || !bits.is_multiple_of(8) {
+                    return Err(AppError::InvalidType(format!(
+                        "uint size must be 8-256 and multiple of 8, got {bits}"
+                    )));
+                }
+                Ok(ValueType::Uint(bits))
+            }
+            s if s.starts_with("int") && !s.starts_with("int8") || s == "int8" => {
+                let bits: u16 = s[3..]
+                    .parse()
+                    .map_err(|_| AppError::InvalidType(format!("invalid int size: {s}")))?;
+                if !(8..=256).contains(&bits) || !bits.is_multiple_of(8) {
+                    return Err(AppError::InvalidType(format!(
+                        "int size must be 8-256 and multiple of 8, got {bits}"
+                    )));
+                }
+                Ok(ValueType::Int(bits))
+            }
+            s if s.starts_with("bytes") && s.len() > 5 => {
+                let size: u8 = s[5..]
+                    .parse()
+                    .map_err(|_| AppError::InvalidType(format!("invalid bytes size: {s}")))?;
+                if !(1..=32).contains(&size) {
+                    return Err(AppError::InvalidType(format!(
+                        "bytes size must be 1-32, got {size}"
+                    )));
+                }
+                Ok(ValueType::FixedBytes(size))
+            }
+            _ => Err(AppError::InvalidType(format!("unknown type: {s}"))),
+        }
+    }
+}
+
+impl Serialize for ValueType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let s = match self {
+            ValueType::Bool => "bool".to_string(),
+            ValueType::Address => "address".to_string(),
+            ValueType::Bytes => "bytes".to_string(),
+            ValueType::String => "string".to_string(),
+            ValueType::Uint(bits) => format!("uint{bits}"),
+            ValueType::Int(bits) => format!("int{bits}"),
+            ValueType::FixedBytes(size) => format!("bytes{size}"),
+        };
+        serializer.serialize_str(&s)
+    }
+}
+
+impl<'de> Deserialize<'de> for ValueType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        ValueType::from_str(&s).map_err(|e| serde::de::Error::custom(e.to_string()))
+    }
+}
+
+/// 32-byte handle
+///
+/// Layout:
+/// - [0-25]  prehandle: keccak256(ciphertext, protocol_address)[0..26]
+/// - [26-29] chain_id (big-endian)
+/// - [30]    value_type
+/// - [31]    version
+#[derive(Debug)]
+pub struct Handle {
+    pub prehandle: [u8; 26],
+    pub chain_id: [u8; 4],
+    pub value_type: u8,
+    pub version: u8,
+}
+
+impl Handle {
+    pub fn derive(
+        ciphertext: &[u8],
+        protocol_address: Address,
+        chain_id: u32,
+        value_type: ValueType,
+    ) -> Self {
+        // prehandle
+        let mut hasher = Keccak256::default();
+        hasher.update(ciphertext);
+        hasher.update(protocol_address.as_slice());
+        let hash = hasher.finalize();
+
+        let mut prehandle = [0u8; 26];
+        prehandle.copy_from_slice(&hash[0..26]);
+
+        // chain_id
+        let chain_id = chain_id.to_be_bytes();
+
+        // value_type
+        let value_type = value_type.to_byte();
+
+        // version
+        let version = HANDLE_VERSION;
+
+        Handle {
+            prehandle,
+            chain_id,
+            value_type,
+            version,
+        }
+    }
+
+    pub fn to_bytes(&self) -> [u8; 32] {
+        let mut bytes = [0u8; 32];
+        bytes[0..26].copy_from_slice(&self.prehandle);
+        bytes[26..30].copy_from_slice(&self.chain_id);
+        bytes[30] = self.value_type;
+        bytes[31] = self.version;
+        bytes
+    }
+}
+
+impl Serialize for Handle {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let bytes = self.to_bytes();
+        serializer.serialize_str(&format!("0x{}", hex::encode(bytes)))
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub struct HandleRequest {
@@ -14,69 +209,7 @@ pub struct HandleRequest {
 
 #[derive(Debug, Serialize)]
 pub struct HandleResponse {
-    pub handle: String,
+    pub handle: Handle,
     #[serde(rename = "inputProof")]
     pub input_proof: String,
-}
-
-#[derive(Debug)]
-pub enum ValueType {
-    Bool,
-    Uint(u16),
-}
-
-impl FromStr for ValueType {
-    type Err = AppError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "bool" => Ok(ValueType::Bool),
-            s if s.starts_with("uint") => {
-                let bits_str = &s[4..]; // Remove "uint" prefix
-                let bits: u16 = bits_str
-                    .parse()
-                    .map_err(|_| AppError::InvalidType(format!("Invalid uint size: {s}")))?;
-
-                // Validate: must be multiple of 8, between 8 and 256 and not be 24
-                if bits < 8 {
-                    return Err(AppError::InvalidType(format!(
-                        "Uint size must be at least 8 bits, got {bits}"
-                    )));
-                } else if bits > 256 {
-                    return Err(AppError::InvalidType(format!(
-                        "Uint size must be at most 256 bits, got {bits}"
-                    )));
-                } else if !bits.is_multiple_of(8) || bits == 24 {
-                    return Err(AppError::InvalidType(format!(
-                        "Uint size must be a multiple of 8 and not be 24, got {bits} bits"
-                    )));
-                }
-
-                Ok(ValueType::Uint(bits))
-            }
-            _ => Err(AppError::InvalidType(format!("Unknown secret type: {s}"))),
-        }
-    }
-}
-
-impl Serialize for ValueType {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            ValueType::Bool => serializer.serialize_str("bool"),
-            ValueType::Uint(bits) => serializer.serialize_str(&format!("uint{bits}")),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for ValueType {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        ValueType::from_str(&s).map_err(serde::de::Error::custom)
-    }
 }

@@ -35,6 +35,7 @@ impl Server {
             .route("/", get(Self::root))
             .route("/health", get(Self::health_check))
             .route("/v0/secrets", post(handlers::create_handle))
+            .with_state(self.config.clone())
             .layer(TraceLayer::new_for_http())
             .layer(cors)
     }

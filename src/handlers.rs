@@ -1,15 +1,28 @@
-use axum::Json;
+use axum::{Json, extract::State};
 
+use crate::config::Config;
 use crate::error::AppError;
-use crate::types::{HandleRequest, HandleResponse};
+use crate::types::{Handle, HandleRequest, HandleResponse};
 
 pub async fn create_handle(
-    Json(_request_body): Json<HandleRequest>,
+    State(config): State<Config>,
+    Json(request): Json<HandleRequest>,
 ) -> Result<Json<HandleResponse>, AppError> {
-    // Handle: 32 bytes (0x + 64 hex digits)
-    // InputProof: 117 bytes (0x + 234 hex digits)
+    // TODO: use ciphertext when encryption is implemented
+    let data = request.value.to_string().into_bytes();
+
+    let handle = Handle::derive(
+        &data,
+        config.protocol_address,
+        config.chain_id,
+        request.value_type,
+    );
+
+    // TODO: Implement real proof
+    let input_proof = format!("0x{}", "0".repeat(234));
+
     Ok(Json(HandleResponse {
-        handle: format!("0x{}", "0".repeat(64)),
-        input_proof: format!("0x{}", "0".repeat(234)),
+        handle,
+        input_proof,
     }))
 }
