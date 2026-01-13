@@ -103,7 +103,7 @@ impl FromStr for ValueType {
     }
 }
 
-impl Serialize for ValueType {
+impl Serialize for ValueType { // TODO: remove this if serialization is still unused for ValueType
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
