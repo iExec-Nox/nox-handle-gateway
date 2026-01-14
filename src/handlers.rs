@@ -11,11 +11,11 @@ pub async fn create_handle(
     // TODO: use ciphertext when encryption is implemented
     let data = request.value.to_string().into_bytes();
 
-    let handle = Handle::derive(
+    let handle = Handle::new(
         &data,
-        config.protocol_address,
+        config.contract_address,
         config.chain_id,
-        request.value_type,
+        request.solidity_type,
     );
 
     // TODO: Implement real proof

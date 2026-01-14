@@ -135,29 +135,29 @@ impl<'de> Deserialize<'de> for SolidityType {
 /// 32-byte handle
 ///
 /// Layout:
-/// - [0-25]  prehandle: keccak256(ciphertext, protocol_address)[0..26]
+/// - [0-25]  prehandle: keccak256(ciphertext, contract_address)[0..26]
 /// - [26-29] chain_id (big-endian)
-/// - [30]    value_type
+/// - [30]    solidity_type
 /// - [31]    version
 #[derive(Debug)]
 pub struct Handle {
     pub prehandle: [u8; 26],
     pub chain_id: [u8; 4],
-    pub value_type: u8,
+    pub solidity_type: u8,
     pub version: u8,
 }
 
 impl Handle {
-    pub fn derive(
+    pub fn new(
         ciphertext: &[u8],
-        protocol_address: Address,
+        contract_address: Address,
         chain_id: u32,
-        value_type: SolidityType,
+        solidity_type: SolidityType,
     ) -> Self {
         // prehandle
         let mut hasher = Keccak256::default();
         hasher.update(ciphertext);
-        hasher.update(protocol_address.as_slice());
+        hasher.update(contract_address.as_slice());
         let hash = hasher.finalize();
 
         let mut prehandle = [0u8; 26];
@@ -166,8 +166,8 @@ impl Handle {
         // chain_id
         let chain_id = chain_id.to_be_bytes();
 
-        // value_type
-        let value_type = value_type.to_byte();
+        // solidity_type
+        let solidity_type = solidity_type.to_byte();
 
         // version
         let version = HANDLE_VERSION;
@@ -175,7 +175,7 @@ impl Handle {
         Handle {
             prehandle,
             chain_id,
-            value_type,
+            solidity_type,
             version,
         }
     }
@@ -184,7 +184,7 @@ impl Handle {
         let mut bytes = [0u8; 32];
         bytes[0..26].copy_from_slice(&self.prehandle);
         bytes[26..30].copy_from_slice(&self.chain_id);
-        bytes[30] = self.value_type;
+        bytes[30] = self.solidity_type;
         bytes[31] = self.version;
         bytes
     }
@@ -204,7 +204,7 @@ impl Serialize for Handle {
 pub struct HandleRequest {
     pub value: serde_json::Value,
     #[serde(rename = "type")]
-    pub value_type: SolidityType,
+    pub solidity_type: SolidityType,
     pub owner: Address,
 }
 

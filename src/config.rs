@@ -7,7 +7,7 @@ use tracing::debug;
 pub struct Config {
     pub server: ServerConfig,
     pub chain_id: u32,
-    pub protocol_address: Address,
+    pub contract_address: Address,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -23,7 +23,7 @@ impl Config {
             .set_default("server.port", 3000)?
             .set_default("chain_id", 1)?
             .set_default(
-                "protocol_address",
+                "contract_address",
                 "0x0000000000000000000000000000000000000000",
             )?
             .add_source(
