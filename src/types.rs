@@ -76,7 +76,7 @@ impl FromStr for SolidityType {
                 }
                 Ok(SolidityType::Uint(bits))
             }
-            s if s.starts_with("int") && !s.starts_with("int8") || s == "int8" => {
+            s if s.starts_with("int") => {
                 let bits: u16 = s[3..]
                     .parse()
                     .map_err(|_| AppError::InvalidType(format!("invalid int size: {s}")))?;
