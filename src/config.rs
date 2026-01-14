@@ -4,7 +4,7 @@ use config::{Config as ConfigBuilder, ConfigError, Environment};
 use serde::Deserialize;
 use tracing::debug;
 
-// TODO: Simplify the embedding of the configs when wallet generation is no more needed at runtime
+// TODO: Simplify the configuration nesting when wallet generation is no longer needed at startup
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub env: EnvConfig,

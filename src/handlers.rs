@@ -1,7 +1,6 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use alloy_primitives::U256;
 use axum::{Json, extract::State};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::config::AppConfig;
 use crate::error::AppError;
