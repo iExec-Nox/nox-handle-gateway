@@ -1,10 +1,18 @@
 use alloy_primitives::Address;
+use alloy_signer_local::PrivateKeySigner;
 use config::{Config as ConfigBuilder, ConfigError, Environment};
 use serde::Deserialize;
 use tracing::debug;
 
+// TODO: Simplify the embedding of the configs when wallet generation is no more needed at runtime
+#[derive(Debug, Clone)]
+pub struct AppConfig {
+    pub env: EnvConfig,
+    pub signer: PrivateKeySigner,
+}
+
 #[derive(Debug, Clone, Deserialize)]
-pub struct Config {
+pub struct EnvConfig {
     pub server: ServerConfig,
     pub chain: ChainConfig,
 }
@@ -21,9 +29,9 @@ pub struct ChainConfig {
     pub contract_address: Address,
 }
 
-impl Config {
+impl AppConfig {
     pub fn load() -> Result<Self, ConfigError> {
-        let config = ConfigBuilder::builder()
+        let config: EnvConfig = ConfigBuilder::builder()
             .set_default("server.host", "0.0.0.0")?
             .set_default("server.port", 3000)?
             .set_default("chain.id", 1)?
@@ -36,13 +44,23 @@ impl Config {
                     .prefix_separator("_")
                     .separator("__"),
             )
-            .build()?;
+            .build()?
+            .try_deserialize()?;
 
-        config.try_deserialize()
+        let signer = PrivateKeySigner::random();
+
+        Ok(AppConfig {
+            env: config,
+            signer,
+        })
+    }
+
+    pub fn signer_address(&self) -> Address {
+        self.signer.address()
     }
 
     pub fn bind_addr(&self) -> String {
-        let addr = format!("{}:{}", self.server.host, self.server.port);
+        let addr = format!("{}:{}", self.env.server.host, self.env.server.port);
         debug!("Binding address: {}", addr);
         addr
     }

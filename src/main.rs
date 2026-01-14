@@ -4,7 +4,7 @@ pub mod handlers;
 pub mod server;
 pub mod types;
 
-use config::Config;
+use config::AppConfig;
 use server::Server;
 
 use tracing::{debug, error, info};
@@ -20,11 +20,12 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let config = Config::load().map_err(|e| {
+    let config = AppConfig::load().map_err(|e| {
         error!("Failed to load configuration: {e}");
         e
     })?;
-    debug!("Configuration loaded: {:?}", config);
+    debug!("Configuration loaded");
+    info!("EIP-712 signer address: {}", config.signer_address());
 
     info!("Starting nox-handle-gateway on {}", config.bind_addr());
     let server = Server::new(config);

@@ -8,15 +8,15 @@ use tokio::{net::TcpListener, signal};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{debug, info, warn};
 
-use crate::config::Config;
+use crate::config::AppConfig;
 use crate::handlers;
 
 pub struct Server {
-    config: Config,
+    config: AppConfig,
 }
 
 impl Server {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: AppConfig) -> Self {
         Self { config }
     }
 

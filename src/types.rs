@@ -1,8 +1,11 @@
-use alloy_primitives::{Address, hex};
+use alloy_primitives::{Address, B256, U256, hex};
+use alloy_signer::SignerSync;
+use alloy_sol_types::{eip712_domain, sol};
 use serde::{Deserialize, Serialize, Serializer};
 use sha3::{Digest, Keccak256};
 use std::str::FromStr;
 
+use crate::config::AppConfig;
 use crate::error::AppError;
 
 const HANDLE_VERSION: u8 = 0x00; // V0
@@ -132,6 +135,14 @@ impl<'de> Deserialize<'de> for SolidityType {
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct HandleRequest {
+    pub value: serde_json::Value,
+    #[serde(rename = "type")]
+    pub solidity_type: SolidityType,
+    pub owner: Address,
+}
+
 /// 32-byte handle
 ///
 /// Layout:
@@ -200,17 +211,83 @@ impl Serialize for Handle {
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct HandleRequest {
-    pub value: serde_json::Value,
-    #[serde(rename = "type")]
-    pub solidity_type: SolidityType,
-    pub owner: Address,
+sol! {
+    #[derive(Debug)]
+    struct CiphertextVerification {
+        bytes32 handle;
+        address ownerAddress;
+        uint256 createdAt;
+    }
+}
+
+/// InputProof: 117 bytes
+///
+/// Layout:
+/// - [0-31]   createdAt (uint256 BE)
+/// - [32-51]  ownerAddress (20 bytes)
+/// - [52-116] signature (r: 32 + s: 32 + v: 1)
+#[derive(Debug)]
+pub struct InputProof {
+    created_at: U256,
+    owner: Address,
+    signature: [u8; 65],
+}
+
+impl InputProof {
+    /// Create a new InputProof by signing a CiphertextVerification via EIP-712.
+    pub fn new(
+        config: &AppConfig,
+        handle: &Handle,
+        owner: Address,
+        created_at: U256,
+    ) -> Result<Self, AppError> {
+        let domain = eip712_domain! {
+            name: "TEEComputeManager",
+            version: "1",
+            chain_id: u64::from(config.env.chain.id),
+            verifying_contract: config.env.chain.contract_address,
+        };
+
+        let verification = CiphertextVerification {
+            handle: B256::from(handle.to_bytes()),
+            ownerAddress: owner,
+            createdAt: created_at,
+        };
+
+        let signature = config
+            .signer
+            .sign_typed_data_sync(&verification, &domain)
+            .map_err(|e| AppError::SigningError(e.to_string()))?;
+
+        Ok(Self {
+            created_at,
+            owner,
+            signature: signature.as_bytes(),
+        })
+    }
+
+    pub fn to_bytes(&self) -> [u8; 117] {
+        let mut bytes = [0u8; 117];
+        bytes[0..32].copy_from_slice(&self.created_at.to_be_bytes::<32>());
+        bytes[32..52].copy_from_slice(self.owner.as_slice());
+        bytes[52..117].copy_from_slice(&self.signature);
+        bytes
+    }
+}
+
+impl Serialize for InputProof {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let bytes = self.to_bytes();
+        serializer.serialize_str(&format!("0x{}", hex::encode(bytes)))
+    }
 }
 
 #[derive(Debug, Serialize)]
 pub struct HandleResponse {
     pub handle: Handle,
     #[serde(rename = "inputProof")]
-    pub input_proof: String,
+    pub input_proof: InputProof,
 }
