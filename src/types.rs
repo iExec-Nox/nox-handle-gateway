@@ -16,7 +16,7 @@ const HANDLE_VERSION: u8 = 0x00; // V0
 /// - 68-99: bytes1..bytes32 (32 types)
 /// - 100-255: Reserved
 #[derive(Debug, Clone, PartialEq)]
-pub enum ValueType {
+pub enum SolidityType {
     // Special types (0-3)
     Bool,
     Address,
@@ -30,24 +30,24 @@ pub enum ValueType {
     FixedBytes(u8),
 }
 
-impl ValueType {
+impl SolidityType {
     pub fn to_byte(&self) -> u8 {
         match self {
-            ValueType::Bool => 0,
-            ValueType::Address => 1,
-            ValueType::Bytes => 2,
-            ValueType::String => 3,
-            ValueType::Uint(bits) => {
+            SolidityType::Bool => 0,
+            SolidityType::Address => 1,
+            SolidityType::Bytes => 2,
+            SolidityType::String => 3,
+            SolidityType::Uint(bits) => {
                 // uint8 = 4, uint16 = 5, ..., uint256 = 35
                 // Formula: 4 + (bits / 8 - 1)
                 4 + (bits / 8 - 1) as u8
             }
-            ValueType::Int(bits) => {
+            SolidityType::Int(bits) => {
                 // int8 = 36, int16 = 37, ..., int256 = 67
                 // Formula: 36 + (bits / 8 - 1)
                 36 + (bits / 8 - 1) as u8
             }
-            ValueType::FixedBytes(size) => {
+            SolidityType::FixedBytes(size) => {
                 // bytes1 = 68, bytes2 = 69, ..., bytes32 = 99
                 // Formula: 68 + size
                 67 + size
@@ -56,15 +56,15 @@ impl ValueType {
     }
 }
 
-impl FromStr for ValueType {
+impl FromStr for SolidityType {
     type Err = AppError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "bool" => Ok(ValueType::Bool),
-            "address" => Ok(ValueType::Address),
-            "bytes" => Ok(ValueType::Bytes),
-            "string" => Ok(ValueType::String),
+            "bool" => Ok(SolidityType::Bool),
+            "address" => Ok(SolidityType::Address),
+            "bytes" => Ok(SolidityType::Bytes),
+            "string" => Ok(SolidityType::String),
             s if s.starts_with("uint") => {
                 let bits: u16 = s[4..]
                     .parse()
@@ -74,7 +74,7 @@ impl FromStr for ValueType {
                         "uint size must be 8-256 and multiple of 8, got {bits}"
                     )));
                 }
-                Ok(ValueType::Uint(bits))
+                Ok(SolidityType::Uint(bits))
             }
             s if s.starts_with("int") && !s.starts_with("int8") || s == "int8" => {
                 let bits: u16 = s[3..]
@@ -85,7 +85,7 @@ impl FromStr for ValueType {
                         "int size must be 8-256 and multiple of 8, got {bits}"
                     )));
                 }
-                Ok(ValueType::Int(bits))
+                Ok(SolidityType::Int(bits))
             }
             s if s.starts_with("bytes") && s.len() > 5 => {
                 let size: u8 = s[5..]
@@ -96,39 +96,39 @@ impl FromStr for ValueType {
                         "bytes size must be 1-32, got {size}"
                     )));
                 }
-                Ok(ValueType::FixedBytes(size))
+                Ok(SolidityType::FixedBytes(size))
             }
             _ => Err(AppError::InvalidType(format!("unknown type: {s}"))),
         }
     }
 }
 
-// TODO: remove this if serialization is still unused for ValueType
-impl Serialize for ValueType {
+// TODO: remove this if serialization is still unused for SolidityType
+impl Serialize for SolidityType {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         let s = match self {
-            ValueType::Bool => "bool".to_string(),
-            ValueType::Address => "address".to_string(),
-            ValueType::Bytes => "bytes".to_string(),
-            ValueType::String => "string".to_string(),
-            ValueType::Uint(bits) => format!("uint{bits}"),
-            ValueType::Int(bits) => format!("int{bits}"),
-            ValueType::FixedBytes(size) => format!("bytes{size}"),
+            SolidityType::Bool => "bool".to_string(),
+            SolidityType::Address => "address".to_string(),
+            SolidityType::Bytes => "bytes".to_string(),
+            SolidityType::String => "string".to_string(),
+            SolidityType::Uint(bits) => format!("uint{bits}"),
+            SolidityType::Int(bits) => format!("int{bits}"),
+            SolidityType::FixedBytes(size) => format!("bytes{size}"),
         };
         serializer.serialize_str(&s)
     }
 }
 
-impl<'de> Deserialize<'de> for ValueType {
+impl<'de> Deserialize<'de> for SolidityType {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        ValueType::from_str(&s).map_err(|e| serde::de::Error::custom(e.to_string()))
+        SolidityType::from_str(&s).map_err(|e| serde::de::Error::custom(e.to_string()))
     }
 }
 
@@ -152,7 +152,7 @@ impl Handle {
         ciphertext: &[u8],
         protocol_address: Address,
         chain_id: u32,
-        value_type: ValueType,
+        value_type: SolidityType,
     ) -> Self {
         // prehandle
         let mut hasher = Keccak256::default();
@@ -204,7 +204,7 @@ impl Serialize for Handle {
 pub struct HandleRequest {
     pub value: serde_json::Value,
     #[serde(rename = "type")]
-    pub value_type: ValueType,
+    pub value_type: SolidityType,
     pub owner: Address,
 }
 
