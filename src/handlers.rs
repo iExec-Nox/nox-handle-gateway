@@ -13,8 +13,8 @@ pub async fn create_handle(
 
     let handle = Handle::new(
         &data,
-        config.contract_address,
-        config.chain_id,
+        config.chain.contract_address,
+        config.chain.id,
         request.solidity_type,
     );
 
