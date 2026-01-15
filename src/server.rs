@@ -2,6 +2,7 @@ use axum::{
     Json, Router,
     routing::{get, post},
 };
+use axum_prometheus::PrometheusMetricLayer;
 use chrono::Utc;
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, signal};
@@ -31,13 +32,17 @@ impl Server {
             ])
             .allow_origin(tower_http::cors::Any);
 
+        let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
+
         Router::new()
             .route("/", get(Self::root))
             .route("/health", get(Self::health_check))
+            .route("/metrics", get(|| async move { metric_handle.render() }))
             .route("/v0/secrets", post(handlers::create_handle))
             .with_state(self.config.clone())
             .layer(TraceLayer::new_for_http())
             .layer(cors)
+            .layer(prometheus_layer)
     }
 
     pub async fn run(self) -> anyhow::Result<()> {

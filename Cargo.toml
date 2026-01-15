@@ -7,6 +7,7 @@ edition = "2024"
 alloy-primitives = { version = "1.5.2", features = ["serde"] }
 anyhow = "1.0.100"
 axum = "0.8.8"
+axum-prometheus = "0.10.0"
 chrono = { version = "0.4.42", features = ["serde"] }
 config = "0.15.19"
 serde = { version = "1.0.228", features = ["derive"] }
