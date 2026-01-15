@@ -20,7 +20,7 @@ pub async fn create_handle(
 
     let handle = Handle::new(
         &data,
-        state.config.chain.contract_address,
+        state.config.chain.acl_contract,
         state.config.chain.id,
         request.solidity_type,
     )
@@ -33,7 +33,7 @@ pub async fn create_handle(
         name: "TEEComputeManager",
         version: "1",
         chain_id: u64::from(state.config.chain.id),
-        verifying_contract: state.config.chain.contract_address,
+        verifying_contract: state.config.chain.acl_contract,
     };
 
     let created_at = U256::from(
@@ -45,7 +45,8 @@ pub async fn create_handle(
 
     let verification = CiphertextVerification {
         handle: B256::from(&handle),
-        noxACLAddress: state.config.chain.contract_address,
+        owner: request.owner,
+        ACL: state.config.chain.acl_contract,
         createdAt: created_at,
     };
 

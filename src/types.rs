@@ -144,7 +144,7 @@ pub struct HandleRequest {
 /// 32-byte handle
 ///
 /// Layout:
-/// - [0-25]  prehandle: keccak256(ciphertext, contract_address)[0..26]
+/// - [0-25]  prehandle: keccak256(ciphertext, acl_contract)[0..26]
 /// - [26-29] chain_id (big-endian)
 /// - [30]    solidity_type
 /// - [31]    version
@@ -159,14 +159,14 @@ pub struct Handle {
 impl Handle {
     pub fn new(
         ciphertext: &[u8],
-        contract_address: Address,
+        acl_contract: Address,
         chain_id: u32,
         solidity_type: SolidityType,
     ) -> Self {
         // prehandle
         let mut hasher = Keccak256::default();
         hasher.update(ciphertext);
-        hasher.update(contract_address.as_slice());
+        hasher.update(acl_contract.as_slice());
         let hash = hasher.finalize();
 
         let mut prehandle = [0u8; 26];
@@ -203,7 +203,8 @@ sol! {
     #[derive(Debug)]
     struct CiphertextVerification {
         bytes32 handle;
-        address noxACLAddress;
+        address owner;
+        address ACL;
         uint256 createdAt;
     }
 }
