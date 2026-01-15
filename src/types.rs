@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use sha3::{Digest, Keccak256};
 use std::str::FromStr;
 
-use crate::config::AppConfig;
+use crate::AppState;
 use crate::error::AppError;
 
 const HANDLE_VERSION: u8 = 0x00; // V0
@@ -236,7 +236,7 @@ pub struct InputProof {
 impl InputProof {
     /// Create a new InputProof by signing a CiphertextVerification via EIP-712.
     pub fn new(
-        config: &AppConfig,
+        state: &AppState,
         handle: &Handle,
         owner: Address,
         created_at: U256,
@@ -244,8 +244,8 @@ impl InputProof {
         let domain = eip712_domain! {
             name: "TEEComputeManager",
             version: "1",
-            chain_id: u64::from(config.env.chain.id),
-            verifying_contract: config.env.chain.contract_address,
+            chain_id: u64::from(state.config.chain.id),
+            verifying_contract: state.config.chain.contract_address,
         };
 
         let verification = CiphertextVerification {
@@ -254,7 +254,7 @@ impl InputProof {
             createdAt: created_at,
         };
 
-        let signature = config
+        let signature = state
             .signer
             .sign_typed_data_sync(&verification, &domain)
             .map_err(|e| AppError::SigningError(e.to_string()))?;
