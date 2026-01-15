@@ -134,9 +134,9 @@ impl<'de> Deserialize<'de> for SolidityType {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HandleRequest {
     pub value: serde_json::Value,
-    #[serde(rename = "solidityType")]
     pub solidity_type: SolidityType,
     pub owner: Address,
 }
@@ -245,8 +245,8 @@ pub fn serialize_bytes(bytes: &[u8]) -> String {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HandleResponse {
     pub handle: String,
-    #[serde(rename = "inputProof")]
     pub input_proof: String,
 }
