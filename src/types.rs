@@ -1,11 +1,9 @@
-use alloy_primitives::{Address, B256, U256, hex};
-use alloy_signer::SignerSync;
-use alloy_sol_types::{eip712_domain, sol};
+use alloy_primitives::{Address, U256, hex};
+use alloy_sol_types::sol;
 use serde::{Deserialize, Serialize, Serializer};
 use sha3::{Digest, Keccak256};
 use std::str::FromStr;
 
-use crate::AppState;
 use crate::error::AppError;
 
 const HANDLE_VERSION: u8 = 0x00; // V0
@@ -201,16 +199,6 @@ impl Handle {
     }
 }
 
-impl Serialize for Handle {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let bytes = self.to_bytes();
-        serializer.serialize_str(&format!("0x{}", hex::encode(bytes)))
-    }
-}
-
 sol! {
     #[derive(Debug)]
     struct CiphertextVerification {
@@ -235,35 +223,12 @@ pub struct InputProof {
 
 impl InputProof {
     /// Create a new InputProof by signing a CiphertextVerification via EIP-712.
-    pub fn new(
-        state: &AppState,
-        handle: &Handle,
-        owner: Address,
-        created_at: U256,
-    ) -> Result<Self, AppError> {
-        let domain = eip712_domain! {
-            name: "TEEComputeManager",
-            version: "1",
-            chain_id: u64::from(state.config.chain.id),
-            verifying_contract: state.config.chain.contract_address,
-        };
-
-        let verification = CiphertextVerification {
-            handle: B256::from(handle.to_bytes()),
-            ownerAddress: owner,
-            createdAt: created_at,
-        };
-
-        let signature = state
-            .signer
-            .sign_typed_data_sync(&verification, &domain)
-            .map_err(|e| AppError::SigningError(e.to_string()))?;
-
-        Ok(Self {
+    pub fn new(created_at: U256, owner: Address, signature: [u8; 65]) -> Self {
+        Self {
             created_at,
             owner,
-            signature: signature.as_bytes(),
-        })
+            signature,
+        }
     }
 
     pub fn to_bytes(&self) -> [u8; 117] {
@@ -275,19 +240,13 @@ impl InputProof {
     }
 }
 
-impl Serialize for InputProof {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let bytes = self.to_bytes();
-        serializer.serialize_str(&format!("0x{}", hex::encode(bytes)))
-    }
+pub fn serialize_bytes(bytes: &[u8]) -> String {
+    format!("0x{}", hex::encode(bytes))
 }
 
 #[derive(Debug, Serialize)]
 pub struct HandleResponse {
-    pub handle: Handle,
+    pub handle: String,
     #[serde(rename = "inputProof")]
-    pub input_proof: InputProof,
+    pub input_proof: String,
 }
