@@ -45,7 +45,7 @@ pub async fn create_handle(
 
     let verification = CiphertextVerification {
         handle: B256::from(&handle),
-        noxACLAddress: request.owner,
+        noxACLAddress: state.config.chain.contract_address,
         createdAt: created_at,
     };
 
