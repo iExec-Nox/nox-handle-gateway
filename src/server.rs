@@ -8,16 +8,16 @@ use tokio::{net::TcpListener, signal};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{debug, info, warn};
 
-use crate::config::Config;
+use crate::AppState;
 use crate::handlers;
 
 pub struct Server {
-    config: Config,
+    state: AppState,
 }
 
 impl Server {
-    pub fn new(config: Config) -> Self {
-        Self { config }
+    pub fn new(state: AppState) -> Self {
+        Self { state }
     }
 
     fn build_router(&self) -> Router {
@@ -35,13 +35,13 @@ impl Server {
             .route("/", get(Self::root))
             .route("/health", get(Self::health_check))
             .route("/v0/secrets", post(handlers::create_handle))
-            .with_state(self.config.clone())
+            .with_state(self.state.clone())
             .layer(TraceLayer::new_for_http())
             .layer(cors)
     }
 
     pub async fn run(self) -> anyhow::Result<()> {
-        let addr = self.config.bind_addr();
+        let addr = self.state.config.bind_addr();
         let listener = TcpListener::bind(&addr).await?;
 
         info!("Listening on {}", addr);

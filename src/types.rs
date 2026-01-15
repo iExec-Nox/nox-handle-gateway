@@ -1,4 +1,5 @@
-use alloy_primitives::{Address, hex};
+use alloy_primitives::{Address, U256, hex};
+use alloy_sol_types::sol;
 use serde::{Deserialize, Serialize, Serializer};
 use sha3::{Digest, Keccak256};
 use std::str::FromStr;
@@ -132,10 +133,18 @@ impl<'de> Deserialize<'de> for SolidityType {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HandleRequest {
+    pub value: serde_json::Value,
+    pub solidity_type: SolidityType,
+    pub owner: Address,
+}
+
 /// 32-byte handle
 ///
 /// Layout:
-/// - [0-25]  prehandle: keccak256(ciphertext, contract_address)[0..26]
+/// - [0-25]  prehandle: keccak256(ciphertext, acl_contract)[0..26]
 /// - [26-29] chain_id (big-endian)
 /// - [30]    solidity_type
 /// - [31]    version
@@ -150,14 +159,14 @@ pub struct Handle {
 impl Handle {
     pub fn new(
         ciphertext: &[u8],
-        contract_address: Address,
+        acl_contract: Address,
         chain_id: u32,
         solidity_type: SolidityType,
     ) -> Self {
         // prehandle
         let mut hasher = Keccak256::default();
         hasher.update(ciphertext);
-        hasher.update(contract_address.as_slice());
+        hasher.update(acl_contract.as_slice());
         let hash = hasher.finalize();
 
         let mut prehandle = [0u8; 26];
@@ -190,27 +199,55 @@ impl Handle {
     }
 }
 
-impl Serialize for Handle {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let bytes = self.to_bytes();
-        serializer.serialize_str(&format!("0x{}", hex::encode(bytes)))
+sol! {
+    #[derive(Debug)]
+    struct CiphertextVerification {
+        bytes32 handle;
+        address owner;
+        address ACL;
+        uint256 createdAt;
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct HandleRequest {
-    pub value: serde_json::Value,
-    #[serde(rename = "type")]
-    pub solidity_type: SolidityType,
-    pub owner: Address,
+/// InputProof: 117 bytes
+///
+/// Layout:
+/// - [0-31]   createdAt (uint256 BE)
+/// - [32-51]  ownerAddress (20 bytes)
+/// - [52-116] signature (r: 32 + s: 32 + v: 1)
+#[derive(Debug)]
+pub struct InputProof {
+    created_at: U256,
+    owner: Address,
+    signature: [u8; 65],
+}
+
+impl InputProof {
+    /// Create a new InputProof by signing a CiphertextVerification via EIP-712.
+    pub fn new(created_at: U256, owner: Address, signature: [u8; 65]) -> Self {
+        Self {
+            created_at,
+            owner,
+            signature,
+        }
+    }
+
+    pub fn to_bytes(&self) -> [u8; 117] {
+        let mut bytes = [0u8; 117];
+        bytes[0..32].copy_from_slice(&self.created_at.to_be_bytes::<32>());
+        bytes[32..52].copy_from_slice(self.owner.as_slice());
+        bytes[52..117].copy_from_slice(&self.signature);
+        bytes
+    }
+}
+
+pub fn serialize_bytes(bytes: &[u8]) -> String {
+    format!("0x{}", hex::encode(bytes))
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HandleResponse {
-    pub handle: Handle,
-    #[serde(rename = "inputProof")]
+    pub handle: String,
     pub input_proof: String,
 }

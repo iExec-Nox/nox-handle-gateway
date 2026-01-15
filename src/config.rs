@@ -18,7 +18,7 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChainConfig {
     pub id: u32,
-    pub contract_address: Address,
+    pub acl_contract: Address,
 }
 
 impl Config {
@@ -28,7 +28,7 @@ impl Config {
             .set_default("server.port", 3000)?
             .set_default("chain.id", 1)?
             .set_default(
-                "chain.contract_address",
+                "chain.acl_contract",
                 "0x0000000000000000000000000000000000000000",
             )?
             .add_source(
