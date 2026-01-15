@@ -136,7 +136,7 @@ impl<'de> Deserialize<'de> for SolidityType {
 #[derive(Debug, Deserialize)]
 pub struct HandleRequest {
     pub value: serde_json::Value,
-    #[serde(rename = "type")]
+    #[serde(rename = "solidityType")]
     pub solidity_type: SolidityType,
     pub owner: Address,
 }
@@ -203,7 +203,7 @@ sol! {
     #[derive(Debug)]
     struct CiphertextVerification {
         bytes32 handle;
-        address ownerAddress;
+        address noxACLAddress;
         uint256 createdAt;
     }
 }
