@@ -1,5 +1,6 @@
 use axum::{
     Json, Router,
+    extract::State,
     routing::{get, post},
 };
 use axum_prometheus::PrometheusMetricLayer;
@@ -14,11 +15,15 @@ use crate::handlers;
 
 pub struct Server {
     state: AppState,
+    prometheus_layer: PrometheusMetricLayer<'static>,
 }
 
 impl Server {
-    pub fn new(state: AppState) -> Self {
-        Self { state }
+    pub fn new(state: AppState, prometheus_layer: PrometheusMetricLayer<'static>) -> Self {
+        Self {
+            state,
+            prometheus_layer,
+        }
     }
 
     fn build_router(&self) -> Router {
@@ -32,17 +37,15 @@ impl Server {
             ])
             .allow_origin(tower_http::cors::Any);
 
-        let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
-
         Router::new()
             .route("/", get(Self::root))
             .route("/health", get(Self::health_check))
-            .route("/metrics", get(|| async move { metric_handle.render() }))
+            .route("/metrics", get(Self::metrics))
             .route("/v0/secrets", post(handlers::create_handle))
             .with_state(self.state.clone())
             .layer(TraceLayer::new_for_http())
             .layer(cors)
-            .layer(prometheus_layer)
+            .layer(self.prometheus_layer.clone())
     }
 
     pub async fn run(self) -> anyhow::Result<()> {
@@ -67,6 +70,10 @@ impl Server {
             "service": "nox-handle-gateway",
             "timestamp": Utc::now().to_rfc3339()
         }))
+    }
+
+    async fn metrics(State(state): State<AppState>) -> String {
+        state.metrics_handle.render()
     }
 
     async fn shutdown_signal() {
