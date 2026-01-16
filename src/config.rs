@@ -7,6 +7,7 @@ use tracing::debug;
 pub struct Config {
     pub server: ServerConfig,
     pub chain: ChainConfig,
+    pub kms: KmsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -21,6 +22,11 @@ pub struct ChainConfig {
     pub acl_contract: Address,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct KmsConfig {
+    pub url: String,
+}
+
 impl Config {
     pub fn load() -> Result<Self, ConfigError> {
         let config = ConfigBuilder::builder()
@@ -31,6 +37,7 @@ impl Config {
                 "chain.acl_contract",
                 "0x0000000000000000000000000000000000000000",
             )?
+            .set_default("kms.url", "http://localhost:9000")?
             .add_source(
                 Environment::with_prefix("NOX_HANDLE_GATEWAY")
                     .prefix_separator("_")
@@ -38,6 +45,7 @@ impl Config {
             )
             .build()?;
 
+        debug!("Configuration loaded: {config:#?}");
         config.try_deserialize()
     }
 

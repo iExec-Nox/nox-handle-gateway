@@ -12,6 +12,10 @@ pub enum AppError {
     InvalidType(String),
     #[error("Signing error: {0}")]
     SigningError(String),
+    #[error("KMS unavailable: {0}")]
+    KmsUnavailable(String),
+    #[error("Invalid KMS public key: {0}")]
+    KmsInvalidKey(String),
 }
 
 impl AppError {
@@ -19,6 +23,8 @@ impl AppError {
         match self {
             AppError::InvalidType(_) => "invalid_type",
             AppError::SigningError(_) => "signing_error",
+            AppError::KmsUnavailable(_) => "kms_unavailable",
+            AppError::KmsInvalidKey(_) => "kms_invalid_key",
         }
     }
 
@@ -26,6 +32,8 @@ impl AppError {
         match self {
             AppError::InvalidType(_) => StatusCode::BAD_REQUEST,
             AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::KmsUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            AppError::KmsInvalidKey(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }

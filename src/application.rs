@@ -8,25 +8,51 @@ use chrono::Utc;
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, signal};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::AppState;
+use crate::config::Config;
 use crate::handlers;
+use crate::kms::KmsClient;
 
-pub struct Server {
-    state: AppState,
-    prometheus_layer: PrometheusMetricLayer<'static>,
+pub struct Application {
+    config: Config,
 }
 
-impl Server {
-    pub fn new(state: AppState, prometheus_layer: PrometheusMetricLayer<'static>) -> Self {
-        Self {
-            state,
-            prometheus_layer,
-        }
+impl Application {
+    pub fn new(config: Config) -> Self {
+        Self { config }
     }
 
-    fn build_router(&self) -> Router {
+    pub async fn run(self) -> anyhow::Result<()> {
+        let signer = alloy_signer_local::PrivateKeySigner::random();
+        info!("EIP-712 signer address: {}", signer.address());
+
+        let kms_client = KmsClient::new(self.config.kms.url.clone());
+        let kms_public_key = kms_client.get_public_key().await.map_err(|e| {
+            error!("Failed to fetch KMS public key: {e}");
+            anyhow::anyhow!(e)
+        })?;
+
+        let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
+        let state = AppState {
+            config: self.config.clone(),
+            signer,
+            metrics_handle,
+            kms_public_key,
+        };
+
+        let address = self.config.bind_addr();
+        info!("Starting nox-handle-gateway on {address}");
+        let listener = TcpListener::bind(address).await?;
+        axum::serve(listener, Self::build_router(state, prometheus_layer))
+            .with_graceful_shutdown(Self::shutdown_signal())
+            .await?;
+
+        Ok(())
+    }
+
+    fn build_router(state: AppState, prometheus_layer: PrometheusMetricLayer<'static>) -> Router {
         debug!("Building application router");
 
         let cors = CorsLayer::permissive()
@@ -42,23 +68,10 @@ impl Server {
             .route("/health", get(Self::health_check))
             .route("/metrics", get(Self::metrics))
             .route("/v0/secrets", post(handlers::create_handle))
-            .with_state(self.state.clone())
+            .with_state(state)
             .layer(TraceLayer::new_for_http())
             .layer(cors)
-            .layer(self.prometheus_layer.clone())
-    }
-
-    pub async fn run(self) -> anyhow::Result<()> {
-        let addr = self.state.config.bind_addr();
-        let listener = TcpListener::bind(&addr).await?;
-
-        info!("Listening on {}", addr);
-
-        axum::serve(listener, self.build_router())
-            .with_graceful_shutdown(Self::shutdown_signal())
-            .await?;
-
-        Ok(())
+            .layer(prometheus_layer)
     }
 
     async fn health_check() -> Json<Value> {
