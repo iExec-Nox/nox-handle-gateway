@@ -24,6 +24,28 @@ impl Application {
         Self { config }
     }
 
+    fn build_router(state: AppState, prometheus_layer: PrometheusMetricLayer<'static>) -> Router {
+        debug!("Building application router");
+
+        let cors = CorsLayer::permissive()
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::OPTIONS,
+            ])
+            .allow_origin(tower_http::cors::Any);
+
+        Router::new()
+            .route("/", get(Self::root))
+            .route("/health", get(Self::health_check))
+            .route("/metrics", get(Self::metrics))
+            .route("/v0/secrets", post(handlers::create_handle))
+            .with_state(state)
+            .layer(TraceLayer::new_for_http())
+            .layer(cors)
+            .layer(prometheus_layer)
+    }
+
     pub async fn run(self) -> anyhow::Result<()> {
         let signer = alloy_signer_local::PrivateKeySigner::random();
         info!("EIP-712 signer address: {}", signer.address());
@@ -50,28 +72,6 @@ impl Application {
             .await?;
 
         Ok(())
-    }
-
-    fn build_router(state: AppState, prometheus_layer: PrometheusMetricLayer<'static>) -> Router {
-        debug!("Building application router");
-
-        let cors = CorsLayer::permissive()
-            .allow_methods([
-                axum::http::Method::GET,
-                axum::http::Method::POST,
-                axum::http::Method::OPTIONS,
-            ])
-            .allow_origin(tower_http::cors::Any);
-
-        Router::new()
-            .route("/", get(Self::root))
-            .route("/health", get(Self::health_check))
-            .route("/metrics", get(Self::metrics))
-            .route("/v0/secrets", post(handlers::create_handle))
-            .with_state(state)
-            .layer(TraceLayer::new_for_http())
-            .layer(cors)
-            .layer(prometheus_layer)
     }
 
     async fn health_check() -> Json<Value> {
