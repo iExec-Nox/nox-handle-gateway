@@ -1,3 +1,4 @@
+use alloy_signer_local::PrivateKeySigner;
 use axum::{
     Json, Router,
     extract::State,
@@ -5,28 +6,34 @@ use axum::{
 };
 use axum_prometheus::PrometheusMetricLayer;
 use chrono::Utc;
+use metrics_exporter_prometheus::PrometheusHandle;
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, signal};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
-use crate::AppState;
+use crate::config::Config;
 use crate::handlers;
+use crate::kms::{KmsClient, KmsPublicKey};
 
-pub struct Server {
-    state: AppState,
-    prometheus_layer: PrometheusMetricLayer<'static>,
+#[derive(Debug, Clone)]
+pub struct AppState {
+    pub config: Config,
+    pub signer: PrivateKeySigner,
+    pub metrics_handle: PrometheusHandle,
+    pub kms_public_key: KmsPublicKey,
 }
 
-impl Server {
-    pub fn new(state: AppState, prometheus_layer: PrometheusMetricLayer<'static>) -> Self {
-        Self {
-            state,
-            prometheus_layer,
-        }
+pub struct Application {
+    config: Config,
+}
+
+impl Application {
+    pub fn new(config: Config) -> Self {
+        Self { config }
     }
 
-    fn build_router(&self) -> Router {
+    fn build_router(state: AppState, prometheus_layer: PrometheusMetricLayer<'static>) -> Router {
         debug!("Building application router");
 
         let cors = CorsLayer::permissive()
@@ -42,19 +49,34 @@ impl Server {
             .route("/health", get(Self::health_check))
             .route("/metrics", get(Self::metrics))
             .route("/v0/secrets", post(handlers::create_handle))
-            .with_state(self.state.clone())
+            .with_state(state)
             .layer(TraceLayer::new_for_http())
             .layer(cors)
-            .layer(self.prometheus_layer.clone())
+            .layer(prometheus_layer)
     }
 
     pub async fn run(self) -> anyhow::Result<()> {
-        let addr = self.state.config.bind_addr();
-        let listener = TcpListener::bind(&addr).await?;
+        let signer = alloy_signer_local::PrivateKeySigner::random();
+        info!("EIP-712 signer address: {}", signer.address());
 
-        info!("Listening on {}", addr);
+        let kms_client = KmsClient::new(self.config.kms.url.clone());
+        let kms_public_key = kms_client.get_public_key().await.map_err(|e| {
+            error!("Failed to fetch KMS public key: {e}");
+            anyhow::anyhow!(e)
+        })?;
 
-        axum::serve(listener, self.build_router())
+        let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
+        let state = AppState {
+            config: self.config.clone(),
+            signer,
+            metrics_handle,
+            kms_public_key,
+        };
+
+        let address = self.config.bind_addr();
+        info!("Starting Handle Gateway on {address}");
+        let listener = TcpListener::bind(address).await?;
+        axum::serve(listener, Self::build_router(state, prometheus_layer))
             .with_graceful_shutdown(Self::shutdown_signal())
             .await?;
 
@@ -67,7 +89,7 @@ impl Server {
 
     async fn root() -> Json<Value> {
         Json(json!({
-            "service": "nox-handle-gateway",
+            "service": "Handle Gateway",
             "timestamp": Utc::now().to_rfc3339()
         }))
     }

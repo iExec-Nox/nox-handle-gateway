@@ -1,24 +1,14 @@
+pub mod application;
 pub mod config;
 pub mod error;
 pub mod handlers;
-pub mod server;
+pub mod kms;
 pub mod types;
 
-use axum_prometheus::PrometheusMetricLayer;
+use application::Application;
 use config::Config;
-use metrics_exporter_prometheus::PrometheusHandle;
-use server::Server;
-
-use alloy_signer_local::PrivateKeySigner;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-#[derive(Debug, Clone)]
-pub struct AppState {
-    pub config: Config,
-    pub signer: PrivateKeySigner,
-    pub metrics_handle: PrometheusHandle,
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -36,20 +26,7 @@ async fn main() -> anyhow::Result<()> {
     })?;
     debug!("Configuration loaded");
 
-    let signer = PrivateKeySigner::random();
-    info!("EIP-712 signer address: {}", signer.address());
-
-    let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
-
-    let state = AppState {
-        config: config.clone(),
-        signer,
-        metrics_handle,
-    };
-
-    info!("Starting nox-handle-gateway on {}", config.bind_addr());
-    let server = Server::new(state.clone(), prometheus_layer);
-    server.run().await?;
+    Application::new(config).run().await?;
 
     Ok(())
 }
