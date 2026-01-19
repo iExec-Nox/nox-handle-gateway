@@ -74,7 +74,7 @@ impl Application {
         };
 
         let address = self.config.bind_addr();
-        info!("Starting nox-handle-gateway on {address}");
+        info!("Starting Handle Gateway on {address}");
         let listener = TcpListener::bind(address).await?;
         axum::serve(listener, Self::build_router(state, prometheus_layer))
             .with_graceful_shutdown(Self::shutdown_signal())
@@ -89,7 +89,7 @@ impl Application {
 
     async fn root() -> Json<Value> {
         Json(json!({
-            "service": "nox-handle-gateway",
+            "service": "Handle Gateway",
             "timestamp": Utc::now().to_rfc3339()
         }))
     }
