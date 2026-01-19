@@ -5,21 +5,10 @@ pub mod handlers;
 pub mod kms;
 pub mod types;
 
-use alloy_signer_local::PrivateKeySigner;
 use application::Application;
 use config::Config;
-use kms::KmsPublicKey;
-use metrics_exporter_prometheus::PrometheusHandle;
 use tracing::{debug, error};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-#[derive(Debug, Clone)]
-pub struct AppState {
-    pub config: Config,
-    pub signer: PrivateKeySigner,
-    pub metrics_handle: PrometheusHandle,
-    pub kms_public_key: KmsPublicKey,
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

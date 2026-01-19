@@ -4,7 +4,7 @@ use alloy_sol_types::eip712_domain;
 use axum::{Json, extract::State};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::AppState;
+use crate::application::AppState;
 use crate::error::AppError;
 use crate::types::{
     CiphertextVerification, Handle, HandleRequest, HandleResponse, InputProof, serialize_bytes,

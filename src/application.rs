@@ -1,3 +1,4 @@
+use alloy_signer_local::PrivateKeySigner;
 use axum::{
     Json, Router,
     extract::State,
@@ -5,15 +6,23 @@ use axum::{
 };
 use axum_prometheus::PrometheusMetricLayer;
 use chrono::Utc;
+use metrics_exporter_prometheus::PrometheusHandle;
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, signal};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{debug, error, info, warn};
 
-use crate::AppState;
 use crate::config::Config;
 use crate::handlers;
-use crate::kms::KmsClient;
+use crate::kms::{KmsClient, KmsPublicKey};
+
+#[derive(Debug, Clone)]
+pub struct AppState {
+    pub config: Config,
+    pub signer: PrivateKeySigner,
+    pub metrics_handle: PrometheusHandle,
+    pub kms_public_key: KmsPublicKey,
+}
 
 pub struct Application {
     config: Config,
