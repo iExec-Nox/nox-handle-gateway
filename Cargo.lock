@@ -2466,7 +2466,6 @@ dependencies = [
  "axum-prometheus",
  "chrono",
  "config",
- "hex",
  "metrics-exporter-prometheus",
  "reqwest",
  "serde",

@@ -1,4 +1,4 @@
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{B256, U256, hex};
 use alloy_signer::SignerSync;
 use alloy_sol_types::eip712_domain;
 use axum::{Json, extract::State};
