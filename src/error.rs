@@ -7,21 +7,16 @@ use serde_json::json;
 use thiserror::Error;
 
 use crate::crypto;
+use crate::kms;
 
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("Cryptographic error: {0}")]
     CryptoError(#[from] crypto::Error),
-    #[error("Encryption error: {0}")]
-    EncryptionError(String),
     #[error("Invalid type: {0}")]
     InvalidType(String),
-    #[error("Invalid KMS public key: {0}")]
-    KmsInvalidKey(String),
-    #[error("Invalid KMS response: {0}")]
-    KmsInvalidResponse(String),
-    #[error("KMS unavailable: {0}")]
-    KmsUnavailable(String),
+    #[error("KMS error: {0}")]
+    KmsError(#[from] kms::Error),
     #[error("{0}")]
     RepositoryError(#[from] sqlx::error::Error),
     #[error("Signing error: {0}")]
@@ -32,12 +27,9 @@ impl AppError {
     fn error_code(&self) -> &'static str {
         match self {
             AppError::CryptoError(_) => "crypto_error",
-            AppError::EncryptionError(_) => "encryption_error",
             AppError::InvalidType(_) => "invalid_type",
-            AppError::KmsInvalidKey(_) => "kms_invalid_key",
-            AppError::KmsInvalidResponse(_) => "kms_invalid_response",
-            AppError::KmsUnavailable(_) => "kms_unavailable",
-            AppError::RepositoryError(_) => "repository",
+            AppError::KmsError(_) => "kms_error",
+            AppError::RepositoryError(_) => "repository_error",
             AppError::SigningError(_) => "signing_error",
         }
     }
@@ -45,11 +37,13 @@ impl AppError {
     fn status_code(&self) -> StatusCode {
         match self {
             AppError::CryptoError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::EncryptionError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::InvalidType(_) => StatusCode::BAD_REQUEST,
-            AppError::KmsInvalidKey(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::KmsInvalidResponse(_) => StatusCode::BAD_REQUEST,
-            AppError::KmsUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            AppError::KmsError(e) => match e {
+                kms::Error::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+                kms::Error::InvalidResponse(_) => StatusCode::BAD_REQUEST,
+                kms::Error::InvalidKey(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                kms::Error::ClientBuild(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            },
             AppError::RepositoryError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
