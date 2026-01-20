@@ -1,6 +1,9 @@
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
-use sqlx::postgres::{PgPool, PgPoolOptions};
+use sqlx::{
+    postgres::{PgPool, PgPoolOptions},
+    query_as,
+};
 
 #[derive(Deserialize, Serialize, sqlx::FromRow)]
 pub struct HandleEntry {
@@ -27,7 +30,7 @@ impl DataRepository {
         &self,
         entry: &HandleEntry,
     ) -> Result<HandleEntry, sqlx::error::Error> {
-        let result = sqlx::query_as::<_, HandleEntry>(
+        let result = query_as::<_, HandleEntry>(
             "INSERT INTO handles (handle, ciphertext, public_key, nonce, owner) VALUES ($1, $2, $3, $4, $5) RETURNING *",
         )
         .bind(&entry.handle)
