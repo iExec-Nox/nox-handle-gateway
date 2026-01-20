@@ -3,12 +3,14 @@ pub mod config;
 pub mod error;
 pub mod handlers;
 pub mod kms;
+pub mod repository;
 pub mod types;
+
+use tracing::{debug, error};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use application::Application;
 use config::Config;
-use tracing::{debug, error};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

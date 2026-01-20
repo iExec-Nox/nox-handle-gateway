@@ -14,6 +14,7 @@ pub struct Config {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+    pub backend_url: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
