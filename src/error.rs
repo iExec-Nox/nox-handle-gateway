@@ -20,17 +20,24 @@ pub enum AppError {
     KmsInvalidResponse(String),
     #[error("Invalid KMS public key: {0}")]
     KmsInvalidKey(String),
+    #[error("KMS unavailable: {0}")]
+    KmsUnavailable(String),
+    #[error("{0}")]
+    RepositoryError(#[from] sqlx::error::Error),
+    #[error("Signing error: {0}")]
+    SigningError(String),
 }
 
 impl AppError {
     fn error_code(&self) -> &'static str {
         match self {
             AppError::InvalidType(_) => "invalid_type",
-            AppError::SigningError(_) => "signing_error",
+            AppError::KmsInvalidKey(_) => "kms_invalid_key",
             AppError::EncryptionError(_) => "encryption_error",
             AppError::KmsUnavailable(_) => "kms_unavailable",
             AppError::KmsInvalidResponse(_) => "kms_invalid_response",
-            AppError::KmsInvalidKey(_) => "kms_invalid_key",
+            AppError::RepositoryError(_) => "repository",
+            AppError::SigningError(_) => "signing_error",
         }
     }
 
@@ -42,6 +49,9 @@ impl AppError {
             AppError::KmsUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             AppError::KmsInvalidResponse(_) => StatusCode::BAD_REQUEST,
             AppError::KmsInvalidKey(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::KmsUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            AppError::RepositoryError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }

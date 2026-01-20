@@ -15,13 +15,15 @@ use tracing::{debug, info, warn};
 use crate::config::Config;
 use crate::handlers;
 use crate::kms::{KmsClient, KmsPublicKey};
+use crate::repository::DataRepository;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AppState {
     pub config: Config,
-    pub signer: PrivateKeySigner,
-    pub metrics_handle: PrometheusHandle,
     pub kms_public_key: KmsPublicKey,
+    pub metrics_handle: PrometheusHandle,
+    pub repository: DataRepository,
+    pub signer: PrivateKeySigner,
 }
 
 pub struct Application {
@@ -60,12 +62,15 @@ impl Application {
         info!("EIP-712 signer address: {}", signer.address());
 
         let kms_client = KmsClient::new(self.config.kms.url.clone()).await?;
+        let repository = DataRepository::new(&self.config.server.backend_url).await?;
 
         let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
         let state = AppState {
             config: self.config.clone(),
-            signer,
+            kms_public_key,
             metrics_handle,
+            repository,
+            signer,
             kms_public_key: kms_client.public_key,
         };
 
