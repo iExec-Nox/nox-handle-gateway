@@ -6,25 +6,7 @@ use tracing::{debug, error};
 
 use crate::error::AppError;
 
-#[derive(Debug, Clone)]
-pub struct KmsPublicKey([u8; 33]);
-
-impl KmsPublicKey {
-    pub fn from_hex(value: &str) -> Result<Self, String> {
-        let trimmed = value.strip_prefix("0x").unwrap_or(value);
-        let bytes = hex::decode(trimmed).map_err(|e| format!("invalid hex: {e}"))?;
-        if bytes.len() != 33 {
-            return Err(format!("expected 33 bytes, got {}", bytes.len()));
-        }
-        let mut key = [0u8; 33];
-        key.copy_from_slice(&bytes);
-        Ok(Self(key))
-    }
-
-    pub fn as_bytes(&self) -> &[u8; 33] {
-        &self.0
-    }
-}
+pub type KmsPublicKey = [u8; 33];
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -74,6 +56,17 @@ impl KmsClient {
             .await
             .map_err(|e| AppError::KmsInvalidResponse(e.to_string()))?;
 
-        KmsPublicKey::from_hex(&body.public_key).map_err(AppError::KmsInvalidKey)
+        Self::decode_public_key(&body.public_key).map_err(AppError::KmsInvalidKey)
+    }
+
+    fn decode_public_key(value: &str) -> Result<KmsPublicKey, String> {
+        let trimmed = value.strip_prefix("0x").unwrap_or(value);
+        let bytes = hex::decode(trimmed).map_err(|e| format!("invalid hex: {e}"))?;
+        if bytes.len() != 33 {
+            return Err(format!("expected 33 bytes, got {}", bytes.len()));
+        }
+        let mut key = [0u8; 33];
+        key.copy_from_slice(&bytes);
+        Ok(key)
     }
 }

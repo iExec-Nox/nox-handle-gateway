@@ -4,7 +4,7 @@ use aes_gcm::{
 };
 use hkdf::Hkdf;
 use k256::{
-    EncodedPoint, PublicKey,
+    PublicKey,
     ecdh::EphemeralSecret,
     elliptic_curve::{
         rand_core::{OsRng, RngCore},
@@ -14,20 +14,19 @@ use k256::{
 use sha2::Sha256;
 use thiserror::Error;
 
-use crate::error::AppError;
 use crate::kms::KmsPublicKey;
 
 /// HKDF info/context string for key derivation
-const ECIES_CONTEXT: &[u8] = b"aes-256-gcm";
+const ECIES_CONTEXT: &[u8] = b"ECIES:AES_GCM:v1";
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("AES-GCM encryption error: {0}")]
+    AesGcmError(String),
     #[error("ECC error: {0}")]
     EccError(String),
     #[error("HKDF error: {0}")]
     HkdfError(String),
-    #[error("AES-GCM encryption error: {0}")]
-    AesGcmError(String),
 }
 
 /// Result of ECIES encryption
@@ -38,26 +37,13 @@ pub struct EciesCiphertext {
     pub ciphertext: Vec<u8>,
 }
 
-impl EciesCiphertext {
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut result = Vec::with_capacity(33 + 12 + self.ciphertext.len());
-        result.extend_from_slice(&self.ephemeral_pubkey);
-        result.extend_from_slice(&self.nonce);
-        result.extend_from_slice(&self.ciphertext);
-        result
-    }
-}
-
 /// Encrypt plaintext using ECIES with the KMS public key.
 pub fn ecies_encrypt(
     plaintext: &[u8],
     kms_pubkey: &KmsPublicKey,
-) -> Result<EciesCiphertext, AppError> {
-    let encoded_point = EncodedPoint::from_bytes(kms_pubkey.as_bytes())
-        .map_err(|e| AppError::EncryptionError(format!("invalid KMS public key: {e}")))?;
-
-    let protocol_key = PublicKey::from_sec1_bytes(encoded_point.as_bytes())
-        .map_err(|e| Error::EccError(e.to_string()))?;
+) -> Result<EciesCiphertext, Error> {
+    let protocol_key = PublicKey::from_sec1_bytes(kms_pubkey)
+        .map_err(|e| Error::EccError(format!("invalid KMS public key: {e}")))?;
 
     let ephemeral_secret = EphemeralSecret::random(&mut OsRng);
     let shared_secret = ephemeral_secret.diffie_hellman(&protocol_key);
