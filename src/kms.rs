@@ -6,7 +6,7 @@ use tracing::debug;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("Failed to build HTTP client: {0}")]
+    #[error("Failed to build KMS HTTP client: {0}")]
     ClientBuild(reqwest::Error),
     #[error("Invalid KMS public key: {0}")]
     InvalidKey(String),

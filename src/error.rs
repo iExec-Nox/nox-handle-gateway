@@ -17,7 +17,7 @@ pub enum AppError {
     InvalidType(String),
     #[error("KMS error: {0}")]
     KmsError(#[from] kms::Error),
-    #[error("{0}")]
+    #[error("Database error: {0}")]
     RepositoryError(#[from] sqlx::error::Error),
     #[error("Signing error: {0}")]
     SigningError(String),
@@ -26,11 +26,11 @@ pub enum AppError {
 impl AppError {
     fn error_code(&self) -> &'static str {
         match self {
-            AppError::CryptoError(_) => "crypto_error",
+            AppError::CryptoError(_) => "crypto",
             AppError::InvalidType(_) => "invalid_type",
-            AppError::KmsError(_) => "kms_error",
-            AppError::RepositoryError(_) => "repository_error",
-            AppError::SigningError(_) => "signing_error",
+            AppError::KmsError(_) => "kms",
+            AppError::RepositoryError(_) => "repository",
+            AppError::SigningError(_) => "signing",
         }
     }
 

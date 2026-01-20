@@ -61,12 +61,8 @@ impl Application {
         let signer = alloy_signer_local::PrivateKeySigner::random();
         info!("EIP-712 signer address: {}", signer.address());
 
-        let kms_client = KmsClient::new(self.config.kms.url.clone())
-            .await
-            .map_err(|e| anyhow::anyhow!("KMS initialization failed: {e}"))?;
-        let repository = DataRepository::new(&self.config.server.backend_url)
-            .await
-            .map_err(|e| anyhow::anyhow!("Repository initialization failed: {e}"))?;
+        let kms_client = KmsClient::new(self.config.kms.url.clone()).await?;
+        let repository = DataRepository::new(&self.config.server.backend_url).await?;
 
         let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
         let state = AppState {
