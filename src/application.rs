@@ -15,13 +15,15 @@ use tracing::{debug, error, info, warn};
 use crate::config::Config;
 use crate::handlers;
 use crate::kms::{KmsClient, KmsPublicKey};
+use crate::repository::DataRepository;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AppState {
     pub config: Config,
-    pub signer: PrivateKeySigner,
-    pub metrics_handle: PrometheusHandle,
     pub kms_public_key: KmsPublicKey,
+    pub metrics_handle: PrometheusHandle,
+    pub repository: DataRepository,
+    pub signer: PrivateKeySigner,
 }
 
 pub struct Application {
@@ -64,13 +66,15 @@ impl Application {
             error!("Failed to fetch KMS public key: {e}");
             anyhow::anyhow!(e)
         })?;
+        let repository = DataRepository::new(&self.config.server.backend_url).await?;
 
         let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
         let state = AppState {
             config: self.config.clone(),
-            signer,
-            metrics_handle,
             kms_public_key,
+            metrics_handle,
+            repository,
+            signer,
         };
 
         let address = self.config.bind_addr();

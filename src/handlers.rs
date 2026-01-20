@@ -2,10 +2,11 @@ use alloy_primitives::{B256, U256};
 use alloy_signer::SignerSync;
 use alloy_sol_types::eip712_domain;
 use axum::{Json, extract::State};
-use std::time::{SystemTime, UNIX_EPOCH};
+use chrono::NaiveDateTime;
 
 use crate::application::AppState;
 use crate::error::AppError;
+use crate::repository::HandleEntry;
 use crate::types::{
     CiphertextVerification, Handle, HandleRequest, HandleResponse, InputProof, serialize_bytes,
 };
@@ -28,6 +29,16 @@ pub async fn create_handle(
 
     let serialized_handle = serialize_bytes(&handle);
 
+    let entry = HandleEntry {
+        handle: serialized_handle.clone(),
+        ciphertext: format!("0x{}", hex::encode(data)),
+        public_key: String::new(),
+        nonce: String::new(),
+        owner: request.owner.to_string(),
+        created_at: NaiveDateTime::default(),
+    };
+    let new_handle = state.repository.create_handle(&entry).await?;
+
     // InputProof
     let domain = eip712_domain! {
         name: "TEEComputeManager",
@@ -36,12 +47,7 @@ pub async fn create_handle(
         verifying_contract: state.config.chain.acl_contract,
     };
 
-    let created_at = U256::from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_secs(),
-    );
+    let created_at = U256::from(new_handle.created_at.and_utc().timestamp());
 
     let verification = CiphertextVerification {
         handle: B256::from(&handle),

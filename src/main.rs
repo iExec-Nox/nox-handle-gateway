@@ -3,6 +3,7 @@ pub mod config;
 pub mod error;
 pub mod handlers;
 pub mod kms;
+pub mod repository;
 pub mod types;
 
 use application::Application;
