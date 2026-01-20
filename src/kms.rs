@@ -38,10 +38,9 @@ pub struct KmsClient {
 
 impl KmsClient {
     pub async fn new(base_url: String) -> Result<Self, Error> {
-        let client = Client::builder().build().map_err(|_| {
-            let error = "Failed to build HTTP client";
-            error!(error);
-            anyhow!(error)
+        let client = Client::builder().build().map_err(|e| {
+            error!("Failed to build HTTP client");
+            anyhow!(e)
         })?;
         let public_key = Self::get_public_key(&base_url, &client)
             .await

@@ -67,11 +67,10 @@ impl Application {
         let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
         let state = AppState {
             config: self.config.clone(),
-            kms_public_key,
+            kms_public_key: kms_client.public_key,
             metrics_handle,
             repository,
             signer,
-            kms_public_key: kms_client.public_key,
         };
 
         let address = self.config.bind_addr();

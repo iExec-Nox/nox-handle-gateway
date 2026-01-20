@@ -6,20 +6,20 @@ use axum::{
 use serde_json::json;
 use thiserror::Error;
 
+use crate::crypto;
+
 #[derive(Debug, Error)]
 pub enum AppError {
-    #[error("Invalid type: {0}")]
-    InvalidType(String),
-    #[error("Signing error: {0}")]
-    SigningError(String),
+    #[error("Cryptographic error: {0}")]
+    CryptoError(#[from] crypto::Error),
     #[error("Encryption error: {0}")]
     EncryptionError(String),
-    #[error("KMS unavailable: {0}")]
-    KmsUnavailable(String),
-    #[error("Invalid KMS response: {0}")]
-    KmsInvalidResponse(String),
+    #[error("Invalid type: {0}")]
+    InvalidType(String),
     #[error("Invalid KMS public key: {0}")]
     KmsInvalidKey(String),
+    #[error("Invalid KMS response: {0}")]
+    KmsInvalidResponse(String),
     #[error("KMS unavailable: {0}")]
     KmsUnavailable(String),
     #[error("{0}")]
@@ -31,11 +31,12 @@ pub enum AppError {
 impl AppError {
     fn error_code(&self) -> &'static str {
         match self {
+            AppError::CryptoError(_) => "crypto_error",
+            AppError::EncryptionError(_) => "encryption_error",
             AppError::InvalidType(_) => "invalid_type",
             AppError::KmsInvalidKey(_) => "kms_invalid_key",
-            AppError::EncryptionError(_) => "encryption_error",
-            AppError::KmsUnavailable(_) => "kms_unavailable",
             AppError::KmsInvalidResponse(_) => "kms_invalid_response",
+            AppError::KmsUnavailable(_) => "kms_unavailable",
             AppError::RepositoryError(_) => "repository",
             AppError::SigningError(_) => "signing_error",
         }
@@ -43,12 +44,11 @@ impl AppError {
 
     fn status_code(&self) -> StatusCode {
         match self {
-            AppError::InvalidType(_) => StatusCode::BAD_REQUEST,
-            AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::CryptoError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::EncryptionError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::KmsUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
-            AppError::KmsInvalidResponse(_) => StatusCode::BAD_REQUEST,
+            AppError::InvalidType(_) => StatusCode::BAD_REQUEST,
             AppError::KmsInvalidKey(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::KmsInvalidResponse(_) => StatusCode::BAD_REQUEST,
             AppError::KmsUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             AppError::RepositoryError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
