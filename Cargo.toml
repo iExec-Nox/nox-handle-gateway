@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+aes-gcm = "0.10.3"
 alloy-primitives = { version = "1.5.2", features = ["serde"] }
 alloy-signer = { version = "1.4.2", features = ["eip712"] }
 alloy-signer-local = "1.4.2"
@@ -13,10 +14,13 @@ axum = "0.8.8"
 axum-prometheus = "0.10.0"
 chrono = { version = "0.4.42", features = ["serde"] }
 config = "0.15.19"
+hkdf = "0.12.4"
+k256 = { version = "0.13.4", features = ["ecdh"] }
 metrics-exporter-prometheus = "0.18.1"
 reqwest = { version = "0.13.1", features = ["json"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+sha2 = "0.10.9"
 sha3 = "0.10.8"
 sqlx = { version = "0.8.6", features = ["chrono", "postgres", "runtime-tokio"] }
 thiserror = "2.0.17"

@@ -1,10 +1,11 @@
-use alloy_primitives::{B256, U256, hex};
+use alloy_primitives::{B256, U256};
 use alloy_signer::SignerSync;
 use alloy_sol_types::eip712_domain;
 use axum::{Json, extract::State};
 use chrono::NaiveDateTime;
 
 use crate::application::AppState;
+use crate::crypto::ecies_encrypt;
 use crate::error::AppError;
 use crate::repository::HandleEntry;
 use crate::types::{
@@ -16,11 +17,11 @@ pub async fn create_handle(
     Json(request): Json<HandleRequest>,
 ) -> Result<Json<HandleResponse>, AppError> {
     // Handle
-    // TODO: use ciphertext when encryption is implemented
-    let data = request.value.to_string().into_bytes();
+    let plaintext = request.value.to_string().into_bytes();
+    let ecies_ciphertext = ecies_encrypt(&plaintext, &state.kms_public_key)?;
 
     let handle = Handle::new(
-        &data,
+        &ecies_ciphertext.ciphertext,
         state.config.chain.acl_contract,
         state.config.chain.id,
         request.solidity_type,
@@ -31,9 +32,9 @@ pub async fn create_handle(
 
     let entry = HandleEntry {
         handle: serialized_handle.clone(),
-        ciphertext: format!("0x{}", hex::encode(data)),
-        public_key: String::new(),
-        nonce: String::new(),
+        ciphertext: serialize_bytes(&ecies_ciphertext.ciphertext),
+        public_key: serialize_bytes(&ecies_ciphertext.ephemeral_pubkey),
+        nonce: serialize_bytes(&ecies_ciphertext.nonce),
         owner: request.owner.to_string(),
         created_at: NaiveDateTime::default(),
     };

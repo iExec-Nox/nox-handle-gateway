@@ -10,7 +10,7 @@ use metrics_exporter_prometheus::PrometheusHandle;
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, signal};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::config::Config;
 use crate::handlers;
@@ -61,17 +61,13 @@ impl Application {
         let signer = alloy_signer_local::PrivateKeySigner::random();
         info!("EIP-712 signer address: {}", signer.address());
 
-        let kms_client = KmsClient::new(self.config.kms.url.clone());
-        let kms_public_key = kms_client.get_public_key().await.map_err(|e| {
-            error!("Failed to fetch KMS public key: {e}");
-            anyhow::anyhow!(e)
-        })?;
+        let kms_client = KmsClient::new(self.config.kms.url.clone()).await?;
         let repository = DataRepository::new(&self.config.server.backend_url).await?;
 
         let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
         let state = AppState {
             config: self.config.clone(),
-            kms_public_key,
+            kms_public_key: kms_client.public_key,
             metrics_handle,
             repository,
             signer,
