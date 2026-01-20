@@ -5,6 +5,7 @@ use axum::{Json, extract::State};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::application::AppState;
+use crate::encryption::encrypt;
 use crate::error::AppError;
 use crate::types::{
     CiphertextVerification, Handle, HandleRequest, HandleResponse, InputProof, serialize_bytes,
@@ -15,11 +16,11 @@ pub async fn create_handle(
     Json(request): Json<HandleRequest>,
 ) -> Result<Json<HandleResponse>, AppError> {
     // Handle
-    // TODO: use ciphertext when encryption is implemented
-    let data = request.value.to_string().into_bytes();
+    let plaintext = request.value.to_string().into_bytes();
+    let encrypted = encrypt(&plaintext, &state.kms_public_key)?;
 
     let handle = Handle::new(
-        &data,
+        &encrypted.to_bytes(),
         state.config.chain.acl_contract,
         state.config.chain.id,
         request.solidity_type,

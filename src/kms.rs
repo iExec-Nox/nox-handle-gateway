@@ -1,7 +1,8 @@
 use alloy_primitives::hex;
+use anyhow::{Error, anyhow};
 use reqwest::Client;
 use serde::Deserialize;
-use tracing::debug;
+use tracing::{debug, error};
 
 use crate::error::AppError;
 
@@ -31,27 +32,32 @@ struct KmsPublicKeyResponse {
     public_key: String,
 }
 
-#[derive(Debug, Clone)]
 pub struct KmsClient {
-    base_url: String,
-    client: Client,
+    pub public_key: KmsPublicKey,
 }
 
 impl KmsClient {
-    pub fn new(base_url: String) -> Self {
-        Self {
-            base_url,
-            client: Client::new(),
-        }
+    pub async fn new(base_url: String) -> Result<Self, Error> {
+        let client = Client::builder().build().map_err(|_| {
+            let error = "Failed to build HTTP client";
+            error!(error);
+            anyhow!(error)
+        })?;
+        let public_key = Self::get_public_key(&base_url, &client)
+            .await
+            .map_err(|e| {
+                error!("Failed to fetch KMS public key: {e}");
+                anyhow!(e)
+            })?;
+        Ok(Self { public_key })
     }
 
-    pub async fn get_public_key(&self) -> Result<KmsPublicKey, AppError> {
-        let base = self.base_url.trim_end_matches('/');
+    async fn get_public_key(base_url: &str, client: &Client) -> Result<KmsPublicKey, AppError> {
+        let base = base_url.trim_end_matches('/');
         let url = format!("{base}/v0/public-key");
         debug!("Fetching KMS public key from {}", url);
 
-        let response = self
-            .client
+        let response = client
             .get(url)
             .send()
             .await
@@ -67,7 +73,7 @@ impl KmsClient {
         let body: KmsPublicKeyResponse = response
             .json()
             .await
-            .map_err(|e| AppError::KmsUnavailable(e.to_string()))?;
+            .map_err(|e| AppError::KmsInvalidResponse(e.to_string()))?;
 
         KmsPublicKey::from_hex(&body.public_key).map_err(AppError::KmsInvalidKey)
     }

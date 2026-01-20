@@ -1,5 +1,6 @@
 pub mod application;
 pub mod config;
+pub mod encryption;
 pub mod error;
 pub mod handlers;
 pub mod kms;
