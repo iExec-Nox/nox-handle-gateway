@@ -24,8 +24,8 @@ impl AppError {
     fn error_code(&self) -> &'static str {
         match self {
             AppError::InvalidType(_) => "invalid_type",
-            AppError::KmsUnavailable(_) => "kms_unavailable",
             AppError::KmsInvalidKey(_) => "kms_invalid_key",
+            AppError::KmsUnavailable(_) => "kms_unavailable",
             AppError::RepositoryError(_) => "repository",
             AppError::SigningError(_) => "signing_error",
         }
@@ -34,8 +34,8 @@ impl AppError {
     fn status_code(&self) -> StatusCode {
         match self {
             AppError::InvalidType(_) => StatusCode::BAD_REQUEST,
-            AppError::KmsUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             AppError::KmsInvalidKey(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::KmsUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             AppError::RepositoryError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
