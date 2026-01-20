@@ -6,10 +6,11 @@ pub mod kms;
 pub mod repository;
 pub mod types;
 
-use application::Application;
-use config::Config;
 use tracing::{debug, error};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+use application::Application;
+use config::Config;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
