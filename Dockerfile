@@ -8,7 +8,7 @@ COPY . .
 # Build the application
 RUN cargo build --release
 
-FROM scratch AS runtime
+FROM alpine:3.23 AS runtime
 
 # Set working directory
 WORKDIR /app
