@@ -199,6 +199,14 @@ sol! {
         address ACL;
         uint256 createdAt;
     }
+
+    #[derive(Debug, Deserialize)]
+    struct DataAccessAuthorization {
+        address userAddress;
+        string encryptionPubKey;
+        uint256 notBefore;
+        uint256 expiresAt;
+    }
 }
 
 /// InputProof: 117 bytes
