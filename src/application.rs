@@ -14,13 +14,13 @@ use tracing::{debug, info, warn};
 
 use crate::config::Config;
 use crate::handlers;
-use crate::kms::{KmsClient, KmsPublicKey};
+use crate::kms::KmsClient;
 use crate::repository::DataRepository;
 
 #[derive(Clone)]
 pub struct AppState {
     pub config: Config,
-    pub kms_public_key: KmsPublicKey,
+    pub kms_client: KmsClient,
     pub metrics_handle: PrometheusHandle,
     pub repository: DataRepository,
     pub signer: PrivateKeySigner,
@@ -51,6 +51,10 @@ impl Application {
             .route("/health", get(Self::health_check))
             .route("/metrics", get(Self::metrics))
             .route("/v0/secrets", post(handlers::create_handle))
+            .route(
+                "/v0/secrets/{handle}",
+                get(handlers::get_handle_crypto_material),
+            )
             .with_state(state)
             .layer(TraceLayer::new_for_http())
             .layer(cors)
@@ -67,7 +71,7 @@ impl Application {
         let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
         let state = AppState {
             config: self.config.clone(),
-            kms_public_key: kms_client.public_key,
+            kms_client,
             metrics_handle,
             repository,
             signer,
