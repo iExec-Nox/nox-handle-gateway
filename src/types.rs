@@ -136,7 +136,7 @@ impl<'de> Deserialize<'de> for SolidityType {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HandleRequest {
-    pub value: serde_json::Value,
+    pub value: String,
     pub solidity_type: SolidityType,
     pub owner: Address,
 }

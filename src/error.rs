@@ -15,6 +15,8 @@ pub enum AppError {
     CryptoError(#[from] crypto::Error),
     #[error("Invalid type: {0}")]
     InvalidType(String),
+    #[error("Invalid value: {0}")]
+    InvalidValue(String),
     #[error("KMS error: {0}")]
     KmsError(#[from] kms::Error),
     #[error("Database error: {0}")]
@@ -28,6 +30,7 @@ impl AppError {
         match self {
             AppError::CryptoError(_) => "crypto",
             AppError::InvalidType(_) => "invalid_type",
+            AppError::InvalidValue(_) => "invalid_value",
             AppError::KmsError(_) => "kms",
             AppError::RepositoryError(_) => "repository",
             AppError::SigningError(_) => "signing",
@@ -38,6 +41,7 @@ impl AppError {
         match self {
             AppError::CryptoError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::InvalidType(_) => StatusCode::BAD_REQUEST,
+            AppError::InvalidValue(_) => StatusCode::BAD_REQUEST,
             AppError::KmsError(e) => match e {
                 kms::Error::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
                 kms::Error::InvalidResponse(_) => StatusCode::BAD_REQUEST,

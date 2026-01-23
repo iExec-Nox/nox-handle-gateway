@@ -11,13 +11,14 @@ use crate::repository::HandleEntry;
 use crate::types::{
     CiphertextVerification, Handle, HandleRequest, HandleResponse, InputProof, serialize_bytes,
 };
+use crate::validation::decode_and_validate_value;
 
 pub async fn create_handle(
     State(state): State<AppState>,
     Json(request): Json<HandleRequest>,
 ) -> Result<Json<HandleResponse>, AppError> {
     // Handle
-    let plaintext = request.value.to_string().into_bytes();
+    let plaintext = decode_and_validate_value(&request.value, &request.solidity_type)?;
     let ecies_ciphertext = ecies_encrypt(&plaintext, &state.kms_public_key)?;
 
     let handle = Handle::new(
