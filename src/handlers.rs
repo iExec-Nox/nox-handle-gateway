@@ -20,6 +20,7 @@ use crate::types::{
     CiphertextVerification, DataAccessAuthorization, Handle, InputProof, SolidityType,
     serialize_bytes,
 };
+use crate::validation::decode_and_validate_value;
 
 // EIP-712 domain name for HandleProof generation
 const TEE_COMPUTE_MANAGER_EIP712_DOMAIN_NAME: &str = "TEEComputeManager";
@@ -29,7 +30,7 @@ const HANDLE_GATEWAY_EIP712_DOMAIN_NAME: &str = "Handle Gateway";
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HandleRequest {
-    value: serde_json::Value,
+    value: String,
     solidity_type: SolidityType,
     owner: Address,
 }
