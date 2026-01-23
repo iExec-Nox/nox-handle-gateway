@@ -163,14 +163,8 @@ pub async fn get_handle_crypto_material(
     let now = U256::from(Utc::now().timestamp());
     if now < payload.notBefore || payload.expiresAt < now {
         warn!(
-            not_before = Utc
-                .timestamp_opt(payload.notBefore.to::<i64>(), 0)
-                .unwrap()
-                .to_string(),
-            expires_at = Utc
-                .timestamp_opt(payload.expiresAt.to::<i64>(), 0)
-                .unwrap()
-                .to_string(),
+            not_before = format_timestamp(payload.notBefore),
+            expires_at = format_timestamp(payload.expiresAt),
             "token is not active or expired",
         );
         return Err(AppError::Unauthorized(
@@ -192,4 +186,12 @@ pub async fn get_handle_crypto_material(
         encrypted_shared_secret,
         iv: entry.nonce,
     }))
+}
+
+fn format_timestamp(ts: U256) -> String {
+    ts.try_into()
+        .ok()
+        .and_then(|secs| Utc.timestamp_opt(secs, 0).single())
+        .map(|dt| dt.to_string())
+        .unwrap_or_else(|| format!("invalid({ts})"))
 }
