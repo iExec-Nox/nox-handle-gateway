@@ -116,10 +116,12 @@ impl KmsClient {
             .post(&url)
             .json(&request_body)
             .send()
+            .await?
+            .error_for_status()?;
+        let data = response
+            .json::<KmsDelegateResponse>()
             .await
             .map_err(|e| Error::InvalidResponse(e.to_string()))?;
-        info!("KMS response status {}", response.status());
-        let data = response.json::<KmsDelegateResponse>().await?;
         Ok(data.encrypted_shared_secret)
     }
 }

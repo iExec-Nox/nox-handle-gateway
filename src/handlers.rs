@@ -21,6 +21,11 @@ use crate::types::{
     serialize_bytes,
 };
 
+// EIP-712 domain name for HandleProof generation
+const TEE_COMPUTE_MANAGER_EIP712_DOMAIN_NAME: &str = "TEEComputeManager";
+// EIP-712 domain name for DataAccessAuthorization validation
+const HANDLE_GATEWAY_EIP712_DOMAIN_NAME: &str = "Handle Gateway";
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HandleRequest {
@@ -81,7 +86,7 @@ pub async fn create_handle(
 
     // InputProof
     let domain = eip712_domain! {
-        name: "TEEComputeManager",
+        name: TEE_COMPUTE_MANAGER_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(state.config.chain.id),
         verifying_contract: state.config.chain.acl_contract,
@@ -120,7 +125,10 @@ pub async fn get_handle_crypto_material(
     info!("get_handle_crypto_material query for handle {}", handle);
     let token = headers
         .get(header::AUTHORIZATION)
-        .ok_or(AppError::Unauthorized("header missing".to_string()))?;
+        .ok_or(AppError::Unauthorized("header missing".to_string()))?
+        .to_str()
+        .map_err(|e| AppError::Unauthorized(e.to_string()))?
+        .trim_start_matches("EIP712 ");
     let token_bytes = STANDARD
         .decode(token)
         .map_err(|e| AppError::Unauthorized(e.to_string()))?;
@@ -128,7 +136,7 @@ pub async fn get_handle_crypto_material(
         serde_json::from_slice(&token_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
 
     let domain = eip712_domain! {
-        name: "Handle Gateway",
+        name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(state.config.chain.id),
         verifying_contract: state.config.chain.acl_contract,
@@ -147,7 +155,7 @@ pub async fn get_handle_crypto_material(
         warn!(
             user = payload.userAddress.to_string(),
             recovered = recovered_address.to_string(),
-            "revovered address mismatch",
+            "recovered address mismatch",
         );
         return Err(AppError::Unauthorized("invalid signature".to_string()));
     }

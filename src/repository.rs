@@ -43,7 +43,7 @@ impl DataRepository {
         Ok(result)
     }
 
-    pub async fn fetch_handle(&self, id: &String) -> Result<HandleEntry, sqlx::error::Error> {
+    pub async fn fetch_handle(&self, id: &str) -> Result<HandleEntry, sqlx::error::Error> {
         let handle = query_as::<_, HandleEntry>("SELECT * FROM handles WHERE handle = $1")
             .bind(id)
             .fetch_one(&self.pool)
