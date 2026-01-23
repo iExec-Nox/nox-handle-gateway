@@ -61,7 +61,7 @@ impl KmsClient {
         let public_key = Self::get_public_key(&base_url, &client).await?;
         Ok(Self {
             client,
-            base_url: base_url.trim_end_matches('/'),
+            base_url: base_url.trim_end_matches('/').to_string(),
             public_key,
         })
     }
