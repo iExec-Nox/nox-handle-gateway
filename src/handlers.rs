@@ -161,7 +161,7 @@ pub async fn get_handle_crypto_material(
     }
 
     let now = U256::from(Utc::now().timestamp());
-    if now < payload.notBefore || payload.expiresAt < now {
+    if now < payload.notBefore || payload.expiresAt <= now {
         warn!(
             not_before = format_timestamp(payload.notBefore),
             expires_at = format_timestamp(payload.expiresAt),
