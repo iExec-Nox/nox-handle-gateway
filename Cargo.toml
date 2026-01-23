@@ -12,6 +12,7 @@ alloy-sol-types = "1.5.2"
 anyhow = "1.0.100"
 axum = "0.8.8"
 axum-prometheus = "0.10.0"
+base64 = "0.22.1"
 chrono = { version = "0.4.42", features = ["serde"] }
 config = "0.15.19"
 hkdf = "0.12.4"

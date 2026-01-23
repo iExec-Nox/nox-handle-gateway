@@ -21,6 +21,8 @@ pub enum AppError {
     RepositoryError(#[from] sqlx::error::Error),
     #[error("Signing error: {0}")]
     SigningError(String),
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
 }
 
 impl AppError {
@@ -31,6 +33,7 @@ impl AppError {
             AppError::KmsError(_) => "kms",
             AppError::RepositoryError(_) => "repository",
             AppError::SigningError(_) => "signing",
+            AppError::Unauthorized(_) => "unauthorized",
         }
     }
 
@@ -46,6 +49,7 @@ impl AppError {
             },
             AppError::RepositoryError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
         }
     }
 }

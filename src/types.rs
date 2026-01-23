@@ -133,14 +133,6 @@ impl<'de> Deserialize<'de> for SolidityType {
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HandleRequest {
-    pub value: serde_json::Value,
-    pub solidity_type: SolidityType,
-    pub owner: Address,
-}
-
 /// 32-byte handle
 ///
 /// Layout:
@@ -207,6 +199,14 @@ sol! {
         address ACL;
         uint256 createdAt;
     }
+
+    #[derive(Debug, Deserialize)]
+    struct DataAccessAuthorization {
+        address userAddress;
+        string encryptionPubKey;
+        uint256 notBefore;
+        uint256 expiresAt;
+    }
 }
 
 /// InputProof: 117 bytes
@@ -243,11 +243,4 @@ impl InputProof {
 
 pub fn serialize_bytes(bytes: &[u8]) -> String {
     format!("0x{}", hex::encode(bytes))
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HandleResponse {
-    pub handle: String,
-    pub input_proof: String,
 }
