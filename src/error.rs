@@ -13,8 +13,10 @@ use crate::kms;
 pub enum AppError {
     #[error("Cryptographic error: {0}")]
     CryptoError(#[from] crypto::Error),
-    #[error("Invalid type: {0}")]
-    InvalidType(String),
+    #[error("Invalid Solidity type: {0}")]
+    InvalidSolidityType(String),
+    #[error("Invalid Solidity value: {0}")]
+    InvalidSolidityValue(String),
     #[error("KMS error: {0}")]
     KmsError(#[from] kms::Error),
     #[error("Database error: {0}")]
@@ -29,7 +31,8 @@ impl AppError {
     fn error_code(&self) -> &'static str {
         match self {
             AppError::CryptoError(_) => "crypto",
-            AppError::InvalidType(_) => "invalid_type",
+            AppError::InvalidSolidityType(_) => "invalid_type",
+            AppError::InvalidSolidityValue(_) => "invalid_value",
             AppError::KmsError(_) => "kms",
             AppError::RepositoryError(_) => "repository",
             AppError::SigningError(_) => "signing",
@@ -40,7 +43,8 @@ impl AppError {
     fn status_code(&self) -> StatusCode {
         match self {
             AppError::CryptoError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::InvalidType(_) => StatusCode::BAD_REQUEST,
+            AppError::InvalidSolidityType(_) => StatusCode::BAD_REQUEST,
+            AppError::InvalidSolidityValue(_) => StatusCode::BAD_REQUEST,
             AppError::KmsError(e) => match e {
                 kms::Error::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
                 kms::Error::InvalidResponse(_) => StatusCode::BAD_REQUEST,

@@ -14,8 +14,6 @@ use k256::{
 use sha2::Sha256;
 use thiserror::Error;
 
-use crate::kms::KmsPublicKey;
-
 /// HKDF info/context string for key derivation
 const ECIES_CONTEXT: &[u8] = b"ECIES:AES_GCM:v1";
 
@@ -38,15 +36,9 @@ pub struct EciesCiphertext {
 }
 
 /// Encrypt plaintext using ECIES with the KMS public key.
-pub fn ecies_encrypt(
-    plaintext: &[u8],
-    kms_pubkey: &KmsPublicKey,
-) -> Result<EciesCiphertext, Error> {
-    let protocol_key = PublicKey::from_sec1_bytes(kms_pubkey)
-        .map_err(|e| Error::EccError(format!("invalid KMS public key: {e}")))?;
-
+pub fn ecies_encrypt(plaintext: &[u8], kms_pubkey: &PublicKey) -> Result<EciesCiphertext, Error> {
     let ephemeral_secret = EphemeralSecret::random(&mut OsRng);
-    let shared_secret = ephemeral_secret.diffie_hellman(&protocol_key);
+    let shared_secret = ephemeral_secret.diffie_hellman(kms_pubkey);
     let hkdf = Hkdf::<Sha256>::new(None, shared_secret.raw_secret_bytes());
     let mut aes_key = [0u8; 32];
     hkdf.expand(ECIES_CONTEXT, &mut aes_key)

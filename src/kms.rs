@@ -1,4 +1,5 @@
 use alloy_primitives::hex;
+use k256::PublicKey;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -27,8 +28,6 @@ impl From<reqwest::Error> for Error {
     }
 }
 
-pub type KmsPublicKey = [u8; 33];
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KmsDelegateRequest {
@@ -52,7 +51,7 @@ struct KmsPublicKeyResponse {
 pub struct KmsClient {
     pub client: Client,
     pub base_url: String,
-    pub public_key: KmsPublicKey,
+    pub public_key: PublicKey,
 }
 
 impl KmsClient {
@@ -66,7 +65,7 @@ impl KmsClient {
         })
     }
 
-    async fn get_public_key(base_url: &str, client: &Client) -> Result<KmsPublicKey, Error> {
+    async fn get_public_key(base_url: &str, client: &Client) -> Result<PublicKey, Error> {
         let base = base_url.trim_end_matches('/');
         let url = format!("{base}/v0/public-key");
         debug!("Fetching KMS public key from {url}");
@@ -81,19 +80,12 @@ impl KmsClient {
         Self::decode_public_key(&body.public_key)
     }
 
-    fn decode_public_key(value: &str) -> Result<KmsPublicKey, Error> {
+    fn decode_public_key(value: &str) -> Result<PublicKey, Error> {
         let trimmed = value.strip_prefix("0x").unwrap_or(value);
         let bytes =
             hex::decode(trimmed).map_err(|e| Error::InvalidKey(format!("invalid hex: {e}")))?;
-        if bytes.len() != 33 {
-            return Err(Error::InvalidKey(format!(
-                "expected 33 bytes, got {}",
-                bytes.len()
-            )));
-        }
-        let mut key = [0u8; 33];
-        key.copy_from_slice(&bytes);
-        Ok(key)
+        PublicKey::from_sec1_bytes(&bytes)
+            .map_err(|e| Error::InvalidKey(format!("invalid SEC1 public key: {e}")))
     }
 
     pub async fn get_encrypted_shared_secret(
