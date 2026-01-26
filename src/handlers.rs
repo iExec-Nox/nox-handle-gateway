@@ -16,10 +16,7 @@ use crate::application::AppState;
 use crate::crypto::ecies_encrypt;
 use crate::error::AppError;
 use crate::repository::HandleEntry;
-use crate::types::{
-    CiphertextVerification, DataAccessAuthorization, Handle, HandleProof, SolidityType,
-    serialize_bytes,
-};
+use crate::types::{DataAccessAuthorization, Handle, HandleProof, SolidityType, serialize_bytes};
 
 // EIP-712 domain name for HandleProof generation
 const TEE_COMPUTE_MANAGER_EIP712_DOMAIN_NAME: &str = "TEEComputeManager";
@@ -38,7 +35,7 @@ pub struct HandleRequest {
 #[serde(rename_all = "camelCase")]
 pub struct HandleResponse {
     handle: String,
-    handle_proof: String,
+    proof: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,7 +91,7 @@ pub async fn create_handle(
 
     let created_at = U256::from(new_handle.created_at.and_utc().timestamp());
     let acl = state.config.chain.acl_contract;
-    let verification = CiphertextVerification {
+    let proof = HandleProof {
         handle: B256::from(&handle),
         owner: request.owner,
         ACL: acl,
@@ -103,17 +100,17 @@ pub async fn create_handle(
 
     let signature = state
         .signer
-        .sign_typed_data_sync(&verification, &domain)
+        .sign_typed_data_sync(&proof, &domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .as_bytes();
 
-    let handle_proof = HandleProof::new(request.owner, acl, created_at, signature).to_bytes();
+    let handle_proof = proof.to_bytes(signature);
     let serialized_handle_proof = serialize_bytes(&handle_proof);
 
     // Response
     Ok(Json(HandleResponse {
         handle: serialized_handle,
-        handle_proof: serialized_handle_proof,
+        proof: serialized_handle_proof,
     }))
 }
 

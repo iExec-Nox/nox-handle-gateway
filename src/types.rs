@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, U256, hex};
+use alloy_primitives::{Address, hex};
 use alloy_sol_types::sol;
 use serde::{Deserialize, Serialize, Serializer};
 use sha3::{Digest, Keccak256};
@@ -193,7 +193,7 @@ impl Handle {
 
 sol! {
     #[derive(Debug)]
-    struct CiphertextVerification {
+    struct HandleProof {
         bytes32 handle;
         address owner;
         address ACL;
@@ -209,38 +209,20 @@ sol! {
     }
 }
 
-/// HandleProof: 137 bytes
-///
-/// Layout:
-/// - [0-19]   owner (20 bytes)
-/// - [20-39]  acl (20 bytes)
-/// - [40-71]  createdAt (uint256 BE)
-/// - [72-136] signature (r: 32 + s: 32 + v: 1)
-#[derive(Debug)]
-pub struct HandleProof {
-    owner: Address,
-    acl: Address,
-    created_at: U256,
-    signature: [u8; 65],
-}
-
 impl HandleProof {
-    /// Create a new HandleProof by signing CiphertextVerification via EIP-712.
-    pub fn new(owner: Address, acl: Address, created_at: U256, signature: [u8; 65]) -> Self {
-        Self {
-            owner,
-            acl,
-            created_at,
-            signature,
-        }
-    }
-
-    pub fn to_bytes(&self) -> [u8; 137] {
+    /// Create a new 137 bytes HandleProof for EIP-712 signing.
+    ///
+    /// Layout:
+    /// - [0-19]   owner (20 bytes)
+    /// - [20-39]  acl (20 bytes)
+    /// - [40-71]  createdAt (uint256 BE)
+    /// - [72-136] signature (r: 32 + s: 32 + v: 1)
+    pub fn to_bytes(&self, signature: [u8; 65]) -> [u8; 137] {
         let mut bytes = [0u8; 137];
         bytes[0..20].copy_from_slice(self.owner.as_slice());
-        bytes[20..40].copy_from_slice(self.acl.as_slice());
-        bytes[40..72].copy_from_slice(&self.created_at.to_be_bytes::<32>());
-        bytes[72..137].copy_from_slice(&self.signature);
+        bytes[20..40].copy_from_slice(self.ACL.as_slice());
+        bytes[40..72].copy_from_slice(&self.createdAt.to_be_bytes::<32>());
+        bytes[72..137].copy_from_slice(&signature);
         bytes
     }
 }
