@@ -21,20 +21,13 @@ fn decode_hex(value: &str) -> Result<Vec<u8>, AppError> {
         return Err(AppError::InvalidValue("empty hex value".to_string()));
     }
 
-    let len = trimmed.len();
-    let normalized = if len % 2 == 1 {
-        if len == 1 {
-            format!("0{trimmed}")
-        } else {
-            return Err(AppError::InvalidValue(
-                "hex length must be even".to_string(),
-            ));
-        }
-    } else {
-        trimmed.to_string()
-    };
+    if !trimmed.len().is_multiple_of(2) {
+        return Err(AppError::InvalidValue(
+            "hex length must be even".to_string(),
+        ));
+    }
 
-    hex::decode(normalized).map_err(|e| AppError::InvalidValue(format!("invalid hex: {e}")))
+    hex::decode(trimmed).map_err(|e| AppError::InvalidValue(format!("invalid hex: {e}")))
 }
 
 /// Validate byte count matches expected size for type.
