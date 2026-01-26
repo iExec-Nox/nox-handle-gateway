@@ -6,6 +6,7 @@ pub mod handlers;
 pub mod kms;
 pub mod repository;
 pub mod types;
+pub mod validation;
 
 use tracing::{debug, error};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
