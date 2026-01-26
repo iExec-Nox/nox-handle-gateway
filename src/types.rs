@@ -67,11 +67,11 @@ impl FromStr for SolidityType {
             "bytes" => Ok(SolidityType::Bytes),
             "string" => Ok(SolidityType::String),
             s if s.starts_with("uint") => {
-                let bits: u16 = s[4..]
-                    .parse()
-                    .map_err(|_| AppError::InvalidType(format!("invalid uint size: {s}")))?;
+                let bits: u16 = s[4..].parse().map_err(|_| {
+                    AppError::InvalidSolidityType(format!("invalid uint size: {s}"))
+                })?;
                 if !(8..=256).contains(&bits) || !bits.is_multiple_of(8) {
-                    return Err(AppError::InvalidType(format!(
+                    return Err(AppError::InvalidSolidityType(format!(
                         "uint size must be 8-256 and multiple of 8, got {bits}"
                     )));
                 }
@@ -80,26 +80,26 @@ impl FromStr for SolidityType {
             s if s.starts_with("int") => {
                 let bits: u16 = s[3..]
                     .parse()
-                    .map_err(|_| AppError::InvalidType(format!("invalid int size: {s}")))?;
+                    .map_err(|_| AppError::InvalidSolidityType(format!("invalid int size: {s}")))?;
                 if !(8..=256).contains(&bits) || !bits.is_multiple_of(8) {
-                    return Err(AppError::InvalidType(format!(
+                    return Err(AppError::InvalidSolidityType(format!(
                         "int size must be 8-256 and multiple of 8, got {bits}"
                     )));
                 }
                 Ok(SolidityType::Int(bits))
             }
             s if s.starts_with("bytes") && s.len() > 5 => {
-                let size: u8 = s[5..]
-                    .parse()
-                    .map_err(|_| AppError::InvalidType(format!("invalid bytes size: {s}")))?;
+                let size: u8 = s[5..].parse().map_err(|_| {
+                    AppError::InvalidSolidityType(format!("invalid bytes size: {s}"))
+                })?;
                 if !(1..=32).contains(&size) {
-                    return Err(AppError::InvalidType(format!(
+                    return Err(AppError::InvalidSolidityType(format!(
                         "bytes size must be 1-32, got {size}"
                     )));
                 }
                 Ok(SolidityType::FixedBytes(size))
             }
-            _ => Err(AppError::InvalidType(format!("unknown type: {s}"))),
+            _ => Err(AppError::InvalidSolidityType(format!("unknown type: {s}"))),
         }
     }
 }

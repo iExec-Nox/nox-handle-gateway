@@ -18,16 +18,18 @@ fn decode_hex(value: &str) -> Result<Vec<u8>, AppError> {
     let trimmed = value.strip_prefix("0x").unwrap_or(value);
 
     if trimmed.is_empty() {
-        return Err(AppError::InvalidValue("empty hex value".to_string()));
+        return Err(AppError::InvalidSolidityValue(
+            "empty hex value".to_string(),
+        ));
     }
 
     if !trimmed.len().is_multiple_of(2) {
-        return Err(AppError::InvalidValue(
+        return Err(AppError::InvalidSolidityValue(
             "hex length must be even".to_string(),
         ));
     }
 
-    hex::decode(trimmed).map_err(|e| AppError::InvalidValue(format!("invalid hex: {e}")))
+    hex::decode(trimmed).map_err(|e| AppError::InvalidSolidityValue(format!("invalid hex: {e}")))
 }
 
 /// Validate byte count matches expected size for type.
@@ -37,12 +39,12 @@ fn validate_size(bytes: &[u8], solidity_type: &SolidityType) -> Result<(), AppEr
     match solidity_type {
         SolidityType::Bool => {
             if len != 1 {
-                return Err(AppError::InvalidValue(format!(
+                return Err(AppError::InvalidSolidityValue(format!(
                     "bool must be 1 byte, got {len}"
                 )));
             }
             if bytes[0] > 1 {
-                return Err(AppError::InvalidValue(format!(
+                return Err(AppError::InvalidSolidityValue(format!(
                     "bool must be 0x00 or 0x01, got 0x{:02x}",
                     bytes[0]
                 )));
@@ -50,7 +52,7 @@ fn validate_size(bytes: &[u8], solidity_type: &SolidityType) -> Result<(), AppEr
         }
         SolidityType::Address => {
             if len != 20 {
-                return Err(AppError::InvalidValue(format!(
+                return Err(AppError::InvalidSolidityValue(format!(
                     "address must be 20 bytes, got {len}"
                 )));
             }
@@ -58,23 +60,23 @@ fn validate_size(bytes: &[u8], solidity_type: &SolidityType) -> Result<(), AppEr
         SolidityType::Uint(bits) => {
             let max_bytes = (*bits / 8) as usize;
             if len > max_bytes {
-                return Err(AppError::InvalidValue(format!(
+                return Err(AppError::InvalidSolidityValue(format!(
                     "uint{bits} must be <= {max_bytes} bytes, got {len}"
                 )));
             }
         }
         SolidityType::Int(bits) => {
-            let expected = (*bits / 8) as usize;
-            if len != expected {
-                return Err(AppError::InvalidValue(format!(
-                    "int{bits} must be exactly {expected} bytes, got {len}"
+            let max_bytes = (*bits / 8) as usize;
+            if len > max_bytes {
+                return Err(AppError::InvalidSolidityValue(format!(
+                    "int{bits} must be <= {max_bytes} bytes, got {len}"
                 )));
             }
         }
         SolidityType::FixedBytes(size) => {
             let expected = *size as usize;
             if len != expected {
-                return Err(AppError::InvalidValue(format!(
+                return Err(AppError::InvalidSolidityValue(format!(
                     "bytes{size} must be exactly {expected} bytes, got {len}"
                 )));
             }
