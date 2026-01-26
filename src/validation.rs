@@ -15,17 +15,15 @@ pub fn decode_and_validate_value(
 
 /// Decode hex string (with or without 0x prefix).
 fn decode_hex(value: &str) -> Result<Vec<u8>, AppError> {
-    let trimmed = value
-        .strip_prefix("0x")
-        .or_else(|| value.strip_prefix("0X"))
-        .unwrap_or(value);
+    let trimmed = value.strip_prefix("0x").unwrap_or(value);
 
     if trimmed.is_empty() {
-        return Ok(vec![]);
+        return Err(AppError::InvalidValue("empty hex value".to_string()));
     }
 
-    let normalized = if trimmed.len() % 2 == 1 {
-        if trimmed.len() == 1 {
+    let len = trimmed.len();
+    let normalized = if len % 2 == 1 {
+        if len == 1 {
             format!("0{trimmed}")
         } else {
             return Err(AppError::InvalidValue(
