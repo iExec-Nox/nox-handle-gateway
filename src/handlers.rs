@@ -16,10 +16,7 @@ use crate::application::AppState;
 use crate::crypto::ecies_encrypt;
 use crate::error::AppError;
 use crate::repository::HandleEntry;
-use crate::types::{
-    CiphertextVerification, DataAccessAuthorization, Handle, InputProof, SolidityType,
-    serialize_bytes,
-};
+use crate::types::{DataAccessAuthorization, Handle, HandleProof, SolidityType, serialize_bytes};
 use crate::validation::decode_and_validate_value;
 
 // EIP-712 domain name for HandleProof generation
@@ -39,7 +36,7 @@ pub struct HandleRequest {
 #[serde(rename_all = "camelCase")]
 pub struct HandleResponse {
     handle: String,
-    input_proof: String,
+    proof: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,36 +82,34 @@ pub async fn create_handle(
     };
     let new_handle = state.repository.create_handle(&entry).await?;
 
-    // InputProof
+    // HandleProof
     let domain = eip712_domain! {
         name: TEE_COMPUTE_MANAGER_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(state.config.chain.id),
-        verifying_contract: state.config.chain.acl_contract,
+        verifying_contract: state.config.chain.tee_compute_manager_contract,
     };
 
     let created_at = U256::from(new_handle.created_at.and_utc().timestamp());
-
-    let verification = CiphertextVerification {
+    let proof = HandleProof {
         handle: B256::from(&handle),
         owner: request.owner,
-        ACL: state.config.chain.acl_contract,
+        acl: state.config.chain.acl_contract,
         createdAt: created_at,
     };
 
     let signature = state
         .signer
-        .sign_typed_data_sync(&verification, &domain)
+        .sign_typed_data_sync(&proof, &domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .as_bytes();
 
-    let input_proof = InputProof::new(created_at, request.owner, signature).to_bytes();
-    let serialized_input_proof = serialize_bytes(&input_proof);
+    let serialized_handle_proof = proof.to_serialized_bytes(signature);
 
     // Response
     Ok(Json(HandleResponse {
         handle: serialized_handle,
-        input_proof: serialized_input_proof,
+        proof: serialized_handle_proof,
     }))
 }
 

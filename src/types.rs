@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, U256, hex};
+use alloy_primitives::{Address, hex};
 use alloy_sol_types::sol;
 use serde::{Deserialize, Serialize, Serializer};
 use sha3::{Digest, Keccak256};
@@ -193,10 +193,10 @@ impl Handle {
 
 sol! {
     #[derive(Debug)]
-    struct CiphertextVerification {
+    struct HandleProof {
         bytes32 handle;
         address owner;
-        address ACL;
+        address acl;
         uint256 createdAt;
     }
 
@@ -209,35 +209,21 @@ sol! {
     }
 }
 
-/// InputProof: 117 bytes
-///
-/// Layout:
-/// - [0-31]   createdAt (uint256 BE)
-/// - [32-51]  ownerAddress (20 bytes)
-/// - [52-116] signature (r: 32 + s: 32 + v: 1)
-#[derive(Debug)]
-pub struct InputProof {
-    created_at: U256,
-    owner: Address,
-    signature: [u8; 65],
-}
-
-impl InputProof {
-    /// Create a new InputProof by signing a CiphertextVerification via EIP-712.
-    pub fn new(created_at: U256, owner: Address, signature: [u8; 65]) -> Self {
-        Self {
-            created_at,
-            owner,
-            signature,
-        }
-    }
-
-    pub fn to_bytes(&self) -> [u8; 117] {
-        let mut bytes = [0u8; 117];
-        bytes[0..32].copy_from_slice(&self.created_at.to_be_bytes::<32>());
-        bytes[32..52].copy_from_slice(self.owner.as_slice());
-        bytes[52..117].copy_from_slice(&self.signature);
-        bytes
+impl HandleProof {
+    /// Create a new 137 bytes HandleProof for EIP-712 signing.
+    ///
+    /// Layout:
+    /// - [0-19]   owner (20 bytes)
+    /// - [20-39]  acl (20 bytes)
+    /// - [40-71]  createdAt (uint256 BE)
+    /// - [72-136] signature (r: 32 + s: 32 + v: 1)
+    pub fn to_serialized_bytes(&self, signature: [u8; 65]) -> String {
+        let mut bytes = [0u8; 137];
+        bytes[0..20].copy_from_slice(self.owner.as_slice());
+        bytes[20..40].copy_from_slice(self.acl.as_slice());
+        bytes[40..72].copy_from_slice(&self.createdAt.to_be_bytes::<32>());
+        bytes[72..137].copy_from_slice(&signature);
+        serialize_bytes(&bytes)
     }
 }
 
