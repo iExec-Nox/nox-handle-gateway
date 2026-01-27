@@ -21,6 +21,7 @@ pub struct ServerConfig {
 pub struct ChainConfig {
     pub id: u32,
     pub acl_contract: Address,
+    pub tee_compute_manager_contract: Address,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -36,6 +37,10 @@ impl Config {
             .set_default("chain.id", 1)?
             .set_default(
                 "chain.acl_contract",
+                "0x0000000000000000000000000000000000000000",
+            )?
+            .set_default(
+                "chain.tee_compute_manager_contract",
                 "0x0000000000000000000000000000000000000000",
             )?
             .set_default("kms.url", "http://localhost:9000")?

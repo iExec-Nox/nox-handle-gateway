@@ -196,7 +196,7 @@ sol! {
     struct HandleProof {
         bytes32 handle;
         address owner;
-        address ACL;
+        address acl;
         uint256 createdAt;
     }
 
@@ -220,7 +220,7 @@ impl HandleProof {
     pub fn to_bytes(&self, signature: [u8; 65]) -> [u8; 137] {
         let mut bytes = [0u8; 137];
         bytes[0..20].copy_from_slice(self.owner.as_slice());
-        bytes[20..40].copy_from_slice(self.ACL.as_slice());
+        bytes[20..40].copy_from_slice(self.acl.as_slice());
         bytes[40..72].copy_from_slice(&self.createdAt.to_be_bytes::<32>());
         bytes[72..137].copy_from_slice(&signature);
         bytes

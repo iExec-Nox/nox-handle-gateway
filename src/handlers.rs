@@ -87,15 +87,14 @@ pub async fn create_handle(
         name: TEE_COMPUTE_MANAGER_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(state.config.chain.id),
-        verifying_contract: state.config.chain.acl_contract,
+        verifying_contract: state.config.chain.tee_compute_manager_contract,
     };
 
     let created_at = U256::from(new_handle.created_at.and_utc().timestamp());
-    let acl = state.config.chain.acl_contract;
     let proof = HandleProof {
         handle: B256::from(&handle),
         owner: request.owner,
-        ACL: acl,
+        acl: state.config.chain.acl_contract,
         createdAt: created_at,
     };
 
