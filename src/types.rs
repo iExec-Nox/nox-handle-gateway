@@ -217,13 +217,13 @@ impl HandleProof {
     /// - [20-39]  acl (20 bytes)
     /// - [40-71]  createdAt (uint256 BE)
     /// - [72-136] signature (r: 32 + s: 32 + v: 1)
-    pub fn to_bytes(&self, signature: [u8; 65]) -> [u8; 137] {
+    pub fn to_serialized_bytes(&self, signature: [u8; 65]) -> String {
         let mut bytes = [0u8; 137];
         bytes[0..20].copy_from_slice(self.owner.as_slice());
         bytes[20..40].copy_from_slice(self.acl.as_slice());
         bytes[40..72].copy_from_slice(&self.createdAt.to_be_bytes::<32>());
         bytes[72..137].copy_from_slice(&signature);
-        bytes
+        serialize_bytes(&bytes)
     }
 }
 

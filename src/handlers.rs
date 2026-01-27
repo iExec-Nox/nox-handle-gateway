@@ -104,8 +104,7 @@ pub async fn create_handle(
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .as_bytes();
 
-    let handle_proof = proof.to_bytes(signature);
-    let serialized_handle_proof = serialize_bytes(&handle_proof);
+    let serialized_handle_proof = proof.to_serialized_bytes(signature);
 
     // Response
     Ok(Json(HandleResponse {
