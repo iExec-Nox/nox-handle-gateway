@@ -89,7 +89,7 @@ pub fn load_or_create_signer(config: &SignerConfig) -> Result<PrivateKeySigner, 
     let password = &config.keystore_password;
 
     if !path.exists() {
-        debug!("Keystore not found, creating: {}", path.display());
+        warn!("Keystore not found, creating: {}", path.display());
         create_keystore(path, password)?;
     }
 
