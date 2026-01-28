@@ -16,7 +16,7 @@ use k256::{
 };
 use sha2::Sha256;
 use thiserror::Error;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::config::SignerConfig;
 
