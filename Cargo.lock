@@ -2593,7 +2593,6 @@ dependencies = [
  "hkdf",
  "k256",
  "metrics-exporter-prometheus",
- "rand_core 0.6.4",
  "reqwest",
  "serde",
  "serde_json",

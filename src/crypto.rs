@@ -80,21 +80,28 @@ fn encode_pubkey_compressed(secret: &EphemeralSecret) -> [u8; 33] {
 }
 
 /// Load or create an EIP-712 signer from a keystore file.
+///
+/// 1. If keystore missing, create wallet and persist to storage
+/// 2. Verify file exists with proper permissions (Unix: 0o600)
+/// 3. Load keys from file
 pub fn load_or_create_signer(config: &SignerConfig) -> Result<PrivateKeySigner, Error> {
     let path = &config.keystore_filename;
     let password = &config.keystore_password;
 
-    if path.exists() {
-        debug!("Loading signer from keystore: {}", path.display());
-        PrivateKeySigner::decrypt_keystore(path, password)
-            .map_err(|e| Error::SignerError(format!("Failed to decrypt keystore: {e}")))
-    } else {
-        debug!("Creating new signer keystore: {}", path.display());
-        create_keystore(path, password)
+    if !path.exists() {
+        debug!("Keystore not found, creating: {}", path.display());
+        create_keystore(path, password)?;
     }
+
+    #[cfg(unix)]
+    verify_keystore_permissions(path)?;
+
+    debug!("Loading signer from keystore: {}", path.display());
+    PrivateKeySigner::decrypt_keystore(path, password)
+        .map_err(|e| Error::SignerError(format!("Failed to decrypt keystore: {e}")))
 }
 
-fn create_keystore(path: &Path, password: &str) -> Result<PrivateKeySigner, Error> {
+fn create_keystore(path: &Path, password: &str) -> Result<(), Error> {
     let dir = path.parent().unwrap_or(Path::new("."));
     let filename = path
         .file_name()
@@ -107,7 +114,7 @@ fn create_keystore(path: &Path, password: &str) -> Result<PrivateKeySigner, Erro
     }
 
     let mut rng = OsRng;
-    let (signer, _) = PrivateKeySigner::encrypt_keystore(
+    PrivateKeySigner::encrypt_keystore(
         dir,
         &mut rng,
         PrivateKeySigner::random().credential().to_bytes(),
@@ -116,5 +123,32 @@ fn create_keystore(path: &Path, password: &str) -> Result<PrivateKeySigner, Erro
     )
     .map_err(|e| Error::SignerError(format!("Failed to create keystore: {e}")))?;
 
-    Ok(signer)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let permissions = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(path, permissions)
+            .map_err(|e| Error::SignerError(format!("Failed to set keystore permissions: {e}")))?;
+    }
+
+    debug!("Keystore created: {}", path.display());
+    Ok(())
+}
+
+#[cfg(unix)]
+fn verify_keystore_permissions(path: &Path) -> Result<(), Error> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = std::fs::metadata(path)
+        .map_err(|e| Error::SignerError(format!("Failed to read keystore metadata: {e}")))?;
+
+    let mode = metadata.permissions().mode() & 0o777;
+    if mode != 0o600 {
+        return Err(Error::SignerError(format!(
+            "Insecure keystore permissions: {:o} (expected 600)",
+            mode
+        )));
+    }
+
+    Ok(())
 }

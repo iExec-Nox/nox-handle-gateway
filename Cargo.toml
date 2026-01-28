@@ -19,7 +19,6 @@ config-secret = "0.1.0"
 hkdf = "0.12.4"
 k256 = { version = "0.13.4", features = ["ecdh"] }
 metrics-exporter-prometheus = "0.18.1"
-rand_core = { version = "0.6", features = ["getrandom"] }
 reqwest = { version = "0.13.1", features = ["json"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
