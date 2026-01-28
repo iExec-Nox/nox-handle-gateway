@@ -16,7 +16,7 @@ use k256::{
 };
 use sha2::Sha256;
 use thiserror::Error;
-use tracing::{debug, warn};
+use tracing::{info, warn};
 
 use crate::config::SignerConfig;
 
@@ -79,6 +79,11 @@ fn encode_pubkey_compressed(secret: &EphemeralSecret) -> [u8; 33] {
     result
 }
 
+/// Generates a new random signing key
+pub fn generate_sign_key() -> PrivateKeySigner {
+    PrivateKeySigner::random()
+}
+
 /// Load or create an EIP-712 signer from a keystore file.
 ///
 /// 1. If keystore missing, create wallet and persist to storage
@@ -89,49 +94,75 @@ pub fn load_or_create_signer(config: &SignerConfig) -> Result<PrivateKeySigner, 
     let password = &config.keystore_password;
 
     if !path.exists() {
-        warn!("Keystore not found, creating: {}", path.display());
-        create_keystore(path, password)?;
+        warn!("Keystore file {:?} not found, generating new signer", path);
+        let signer = generate_sign_key();
+        save_signer_to_keystore(&signer, path, password)?;
     }
 
     #[cfg(unix)]
     verify_keystore_permissions(path)?;
 
-    debug!("Loading signer from keystore: {}", path.display());
-    PrivateKeySigner::decrypt_keystore(path, password)
-        .map_err(|e| Error::SignerError(format!("Failed to decrypt keystore: {e}")))
+    load_signer_from_keystore(path, password)
 }
 
-fn create_keystore(path: &Path, password: &str) -> Result<(), Error> {
-    let dir = path.parent().unwrap_or(Path::new("."));
-    let filename = path
+/// Loads the signer from an encrypted keystore file
+fn load_signer_from_keystore(
+    keystore_file: &Path,
+    password: &str,
+) -> Result<PrivateKeySigner, Error> {
+    let signer = PrivateKeySigner::decrypt_keystore(keystore_file, password)
+        .map_err(|e| Error::SignerError(format!("Failed to decrypt keystore: {}", e)))?;
+
+    info!(
+        "Loaded signer from keystore {:?}, address: {}",
+        keystore_file,
+        signer.address()
+    );
+
+    Ok(signer)
+}
+
+/// Saves the signer to an encrypted keystore file
+fn save_signer_to_keystore(
+    signer: &PrivateKeySigner,
+    keystore_file: &Path,
+    password: &str,
+) -> Result<(), Error> {
+    let mut rng = OsRng;
+
+    // Get the private key bytes from the signer
+    let credential = signer.credential();
+    let private_key_bytes = credential.to_bytes();
+
+    // Get parent directory and filename from the path
+    let dir = keystore_file.parent().unwrap_or(Path::new("."));
+    let filename = keystore_file
         .file_name()
         .and_then(|f| f.to_str())
-        .ok_or_else(|| Error::SignerError("Invalid keystore path".to_string()))?;
+        .unwrap_or("gateway_keystore.json");
 
+    // Create directory if needed
     if !dir.exists() && !dir.as_os_str().is_empty() {
         std::fs::create_dir_all(dir)
             .map_err(|e| Error::SignerError(format!("Failed to create keystore directory: {e}")))?;
     }
 
-    let mut rng = OsRng;
-    PrivateKeySigner::encrypt_keystore(
-        dir,
-        &mut rng,
-        PrivateKeySigner::random().credential().to_bytes(),
-        password,
-        Some(filename),
-    )
-    .map_err(|e| Error::SignerError(format!("Failed to create keystore: {e}")))?;
+    // Encrypt and save the keystore
+    PrivateKeySigner::encrypt_keystore(dir, &mut rng, private_key_bytes, password, Some(filename))
+        .map_err(|e| Error::SignerError(format!("Failed to encrypt keystore: {}", e)))?;
 
+    info!("Signer keystore saved to {:?}", keystore_file);
+
+    // Set file permissions to 600 (owner read/write only) on Unix
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let permissions = std::fs::Permissions::from_mode(0o600);
-        std::fs::set_permissions(path, permissions)
-            .map_err(|e| Error::SignerError(format!("Failed to set keystore permissions: {e}")))?;
+        std::fs::set_permissions(keystore_file, permissions).map_err(|e| {
+            Error::SignerError(format!("Failed to set keystore permissions: {}", e))
+        })?;
     }
 
-    debug!("Keystore created: {}", path.display());
     Ok(())
 }
 
