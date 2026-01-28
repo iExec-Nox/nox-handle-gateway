@@ -13,6 +13,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{debug, info, warn};
 
 use crate::config::Config;
+use crate::crypto::load_or_create_signer;
 use crate::handlers;
 use crate::kms::KmsClient;
 use crate::repository::DataRepository;
@@ -62,7 +63,7 @@ impl Application {
     }
 
     pub async fn run(self) -> anyhow::Result<()> {
-        let signer = alloy_signer_local::PrivateKeySigner::random();
+        let signer = load_or_create_signer(&self.config.signer)?;
         info!("EIP-712 signer address: {}", signer.address());
 
         let kms_client = KmsClient::new(self.config.kms.url.clone()).await?;

@@ -1,7 +1,10 @@
+use std::path::Path;
+
 use aes_gcm::{
     Aes256Gcm,
     aead::{Aead, KeyInit, generic_array::GenericArray},
 };
+use alloy_signer_local::PrivateKeySigner;
 use hkdf::Hkdf;
 use k256::{
     PublicKey,
@@ -13,6 +16,9 @@ use k256::{
 };
 use sha2::Sha256;
 use thiserror::Error;
+use tracing::{info, warn};
+
+use crate::config::SignerConfig;
 
 /// HKDF info/context string for key derivation
 const ECIES_CONTEXT: &[u8] = b"ECIES:AES_GCM:v1";
@@ -25,6 +31,8 @@ pub enum Error {
     EccError(String),
     #[error("HKDF error: {0}")]
     HkdfError(String),
+    #[error("Signer error: {0}")]
+    SignerError(String),
 }
 
 /// Result of ECIES encryption
@@ -69,4 +77,109 @@ fn encode_pubkey_compressed(secret: &EphemeralSecret) -> [u8; 33] {
     let mut result = [0u8; 33];
     result.copy_from_slice(bytes);
     result
+}
+
+/// Generates a new random signing key
+pub fn generate_sign_key() -> PrivateKeySigner {
+    PrivateKeySigner::random()
+}
+
+/// Load or create an EIP-712 signer from a keystore file.
+///
+/// 1. If keystore missing, create wallet and persist to storage
+/// 2. Verify file exists with proper permissions (Unix: 0o600)
+/// 3. Load keys from file
+pub fn load_or_create_signer(config: &SignerConfig) -> Result<PrivateKeySigner, Error> {
+    let path = &config.keystore_filename;
+    let password = &config.keystore_password;
+
+    if !path.exists() {
+        warn!("Keystore file {:?} not found, generating new signer", path);
+        let signer = generate_sign_key();
+        save_signer_to_keystore(&signer, path, password)?;
+    }
+
+    #[cfg(unix)]
+    verify_keystore_permissions(path)?;
+
+    load_signer_from_keystore(path, password)
+}
+
+/// Loads the signer from an encrypted keystore file
+fn load_signer_from_keystore(
+    keystore_file: &Path,
+    password: &str,
+) -> Result<PrivateKeySigner, Error> {
+    let signer = PrivateKeySigner::decrypt_keystore(keystore_file, password)
+        .map_err(|e| Error::SignerError(format!("Failed to decrypt keystore: {}", e)))?;
+
+    info!(
+        "Loaded signer from keystore {:?}, address: {}",
+        keystore_file,
+        signer.address()
+    );
+
+    Ok(signer)
+}
+
+/// Saves the signer to an encrypted keystore file
+fn save_signer_to_keystore(
+    signer: &PrivateKeySigner,
+    keystore_file: &Path,
+    password: &str,
+) -> Result<(), Error> {
+    // Get parent directory and filename from the path
+    let dir = keystore_file.parent().unwrap_or(Path::new("."));
+    let filename = keystore_file
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or("gateway_keystore.json");
+
+    // Create directory if needed
+    if !dir.exists() && !dir.as_os_str().is_empty() {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| Error::SignerError(format!("Failed to create keystore directory: {e}")))?;
+    }
+
+    // Encrypt and save the keystore
+    PrivateKeySigner::encrypt_keystore(
+        dir,
+        &mut OsRng,
+        signer.credential().to_bytes(),
+        password,
+        Some(filename),
+    )
+    .map_err(|e| Error::SignerError(format!("Failed to encrypt keystore: {}", e)))?;
+
+    info!("Signer keystore saved to {:?}", keystore_file);
+
+    // Set file permissions to 600 (owner read/write only) on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let permissions = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(keystore_file, permissions).map_err(|e| {
+            Error::SignerError(format!("Failed to set keystore permissions: {}", e))
+        })?;
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn verify_keystore_permissions(path: &Path) -> Result<(), Error> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = std::fs::metadata(path)
+        .map_err(|e| Error::SignerError(format!("Failed to read keystore metadata: {e}")))?;
+
+    let mode = metadata.permissions().mode() & 0o777;
+    if mode != 0o600 {
+        return Err(Error::SignerError(format!(
+            "Insecure keystore permissions: {:o} (expected 600)",
+            mode
+        )));
+    }
+
+    Ok(())
 }
