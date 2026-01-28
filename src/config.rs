@@ -54,7 +54,7 @@ impl Config {
                 "0x0000000000000000000000000000000000000000",
             )?
             .set_default("kms.url", "http://localhost:9000")?
-            .set_default("signer.keystore_filename", "gateway_signer.json")?
+            .set_default("signer.keystore_filename", "gateway_keystore.json")?
             .set_default("signer.keystore_password", "")?
             .add_source(
                 Environment::with_prefix("NOX_HANDLE_GATEWAY")
