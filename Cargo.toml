@@ -7,7 +7,7 @@ edition = "2024"
 aes-gcm = "0.10.3"
 alloy-primitives = { version = "1.5.2", features = ["serde"] }
 alloy-signer = { version = "1.4.2", features = ["eip712"] }
-alloy-signer-local = "1.4.2"
+alloy-signer-local = { version = "1.5.2", features = ["keystore"] }
 alloy-sol-types = "1.5.2"
 anyhow = "1.0.100"
 axum = "0.8.8"
@@ -15,9 +15,11 @@ axum-prometheus = "0.10.0"
 base64 = "0.22.1"
 chrono = { version = "0.4.42", features = ["serde"] }
 config = "0.15.19"
+config-secret = "0.1.0"
 hkdf = "0.12.4"
 k256 = { version = "0.13.4", features = ["ecdh"] }
 metrics-exporter-prometheus = "0.18.1"
+rand_core = { version = "0.6", features = ["getrandom"] }
 reqwest = { version = "0.13.1", features = ["json"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
