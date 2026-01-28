@@ -128,11 +128,8 @@ fn save_signer_to_keystore(
     keystore_file: &Path,
     password: &str,
 ) -> Result<(), Error> {
-    let mut rng = OsRng;
-
     // Get the private key bytes from the signer
     let credential = signer.credential();
-    let private_key_bytes = credential.to_bytes();
 
     // Get parent directory and filename from the path
     let dir = keystore_file.parent().unwrap_or(Path::new("."));
@@ -148,8 +145,14 @@ fn save_signer_to_keystore(
     }
 
     // Encrypt and save the keystore
-    PrivateKeySigner::encrypt_keystore(dir, &mut rng, private_key_bytes, password, Some(filename))
-        .map_err(|e| Error::SignerError(format!("Failed to encrypt keystore: {}", e)))?;
+    PrivateKeySigner::encrypt_keystore(
+        dir,
+        &mut OsRng,
+        credential.to_bytes(),
+        password,
+        Some(filename),
+    )
+    .map_err(|e| Error::SignerError(format!("Failed to encrypt keystore: {}", e)))?;
 
     info!("Signer keystore saved to {:?}", keystore_file);
 
