@@ -167,7 +167,7 @@ impl KmsClient {
             "KMS delegate request (signed)"
         );
 
-        let request_body = DelegateRequestBody {
+        let request_body = KmsDelegateRequestBody {
             ephemeral_pub_key: ephemeral_pub_key.clone(),
             target_pub_key: target_pub_key.clone(),
         };
