@@ -10,8 +10,8 @@ use thiserror::Error;
 use tracing::{debug, info};
 
 use crate::types::{
-    DelegateAuthorization, KMS_PUBLIC_KEY_EIP712_DOMAIN_NAME,
-    PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME, PublicKeyProof, serialize_bytes, strip_0x_prefix,
+    DelegateAuthorization, KMS_PUBLIC_KEY_EIP712_DOMAIN_NAME, PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME,
+    PublicKeyProof, serialize_bytes, strip_0x_prefix,
 };
 
 #[derive(Debug, Error)]
@@ -163,8 +163,12 @@ impl KmsClient {
     ) -> Result<String, Error> {
         let url = format!("{}/v0/delegate", self.base_url);
 
-        let authorization =
-            self.build_delegate_authorization(&ephemeral_pub_key, &target_pub_key, signer, chain_id)?;
+        let authorization = self.build_delegate_authorization(
+            &ephemeral_pub_key,
+            &target_pub_key,
+            signer,
+            chain_id,
+        )?;
 
         info!(
             ephemeral_pub_key = %ephemeral_pub_key,
