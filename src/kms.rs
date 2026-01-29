@@ -2,7 +2,6 @@ use alloy_primitives::{Address, hex};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolStruct, eip712_domain};
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use k256::PublicKey;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -43,15 +42,7 @@ impl From<reqwest::Error> for Error {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct DelegateAuthorizationHeader {
-    ephemeral_pub_key: String,
-    target_pub_key: String,
-    signature: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DelegateRequestBody {
+struct KmsDelegateRequestBody {
     ephemeral_pub_key: String,
     target_pub_key: String,
 }
@@ -215,18 +206,11 @@ impl KmsClient {
             version: "1",
             chain_id: u64::from(chain_id),
         };
+
         let signature = signer
             .sign_typed_data_sync(&auth, &domain)
             .map_err(|e| Error::Signing(e.to_string()))?;
 
-        let header = DelegateAuthorizationHeader {
-            ephemeral_pub_key: ephemeral_pub_key.to_string(),
-            target_pub_key: target_pub_key.to_string(),
-            signature: serialize_bytes(&signature.as_bytes()),
-        };
-        let json = serde_json::to_string(&header)
-            .map_err(|e| Error::Signing(format!("failed to serialize auth header: {e}")))?;
-
-        Ok(BASE64.encode(json.as_bytes()))
+        Ok(serialize_bytes(&signature.as_bytes()))
     }
 }
