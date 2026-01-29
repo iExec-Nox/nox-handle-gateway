@@ -1,13 +1,17 @@
 use alloy_primitives::{Address, hex};
-use alloy_signer::Signature;
+use alloy_signer::{Signature, SignerSync};
+use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolStruct, eip712_domain};
 use k256::PublicKey;
-use reqwest::Client;
+use reqwest::{Client, header::AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, info};
 
-use crate::types::{KMS_PUBLIC_KEY_EIP712_DOMAIN_NAME, PublicKeyProof, strip_0x_prefix};
+use crate::types::{
+    DelegateAuthorization, EIP_712_DOMAIN_VERSION, KMS_PUBLIC_KEY_EIP712_DOMAIN_NAME,
+    PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME, PublicKeyProof, serialize_bytes, strip_0x_prefix,
+};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -21,6 +25,8 @@ pub enum Error {
     InvalidResponse(String),
     #[error("KMS unavailable: {0}")]
     Unavailable(String),
+    #[error("Signing error: {0}")]
+    Signing(String),
 }
 
 impl From<reqwest::Error> for Error {
@@ -36,7 +42,7 @@ impl From<reqwest::Error> for Error {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct KmsDelegateRequest {
+struct KmsDelegateRequestBody {
     ephemeral_pub_key: String,
     target_pub_key: String,
 }
@@ -112,7 +118,7 @@ impl KmsClient {
 
         let domain = eip712_domain! {
             name: KMS_PUBLIC_KEY_EIP712_DOMAIN_NAME,
-            version: "1",
+            version: EIP_712_DOMAIN_VERSION,
             chain_id: u64::from(chain_id),
         };
         let proof_struct = PublicKeyProof {
@@ -141,30 +147,66 @@ impl KmsClient {
 
     pub async fn get_encrypted_shared_secret(
         &self,
-        handle_public_key: String,
-        rsa_public_key: String,
+        ephemeral_pub_key: &str,
+        target_pub_key: &str,
+        signer: &PrivateKeySigner,
+        chain_id: u32,
     ) -> Result<String, Error> {
         let url = format!("{}/v0/delegate", self.base_url);
+
+        let authorization =
+            self.build_delegate_authorization(ephemeral_pub_key, target_pub_key, signer, chain_id)?;
+
         info!(
-            ephemeral_pub_key = handle_public_key,
-            target_pub_key = rsa_public_key,
-            "KMS delegate request"
+            ephemeral_pub_key = %ephemeral_pub_key,
+            target_pub_key = %target_pub_key,
+            "KMS delegate request (signed)"
         );
-        let request_body = KmsDelegateRequest {
-            ephemeral_pub_key: handle_public_key,
-            target_pub_key: rsa_public_key,
+
+        let request_body = KmsDelegateRequestBody {
+            ephemeral_pub_key: ephemeral_pub_key.to_string(),
+            target_pub_key: target_pub_key.to_string(),
         };
+
         let response = self
             .client
             .post(&url)
+            .header(AUTHORIZATION, format!("Bearer {authorization}"))
             .json(&request_body)
             .send()
             .await?
             .error_for_status()?;
+
         let data = response
             .json::<KmsDelegateResponse>()
             .await
             .map_err(|e| Error::InvalidResponse(e.to_string()))?;
+
         Ok(data.encrypted_shared_secret)
+    }
+
+    fn build_delegate_authorization(
+        &self,
+        ephemeral_pub_key: &str,
+        target_pub_key: &str,
+        signer: &PrivateKeySigner,
+        chain_id: u32,
+    ) -> Result<String, Error> {
+        let auth = DelegateAuthorization {
+            ephemeralPubKey: strip_0x_prefix(ephemeral_pub_key).to_string(),
+            targetPubKey: strip_0x_prefix(target_pub_key).to_string(),
+        };
+
+        let domain = eip712_domain! {
+            name: PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME,
+            version: EIP_712_DOMAIN_VERSION,
+            chain_id: u64::from(chain_id),
+        };
+
+        let signature = signer
+            .sign_typed_data_sync(&auth, &domain)
+            .map_err(|e| Error::Signing(e.to_string()))?;
+
+        Ok(serialize_bytes(&signature.as_bytes()))
     }
 }
