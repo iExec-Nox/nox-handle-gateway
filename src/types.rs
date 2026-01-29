@@ -207,7 +207,14 @@ sol! {
         uint256 notBefore;
         uint256 expiresAt;
     }
+
+    #[derive(Debug)]
+    struct PublicKeyProof {
+        string publicKey;
+    }
 }
+
+pub const KMS_PUBLIC_KEY_EIP712_DOMAIN_NAME: &str = "ProtocolPublicKey";
 
 impl HandleProof {
     /// Create a new 137 bytes HandleProof for EIP-712 signing.
@@ -229,4 +236,8 @@ impl HandleProof {
 
 pub fn serialize_bytes(bytes: &[u8]) -> String {
     format!("0x{}", hex::encode(bytes))
+}
+
+pub fn strip_0x_prefix(s: &str) -> &str {
+    s.strip_prefix("0x").unwrap_or(s)
 }
