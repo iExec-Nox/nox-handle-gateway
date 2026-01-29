@@ -3,7 +3,7 @@ use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolStruct, eip712_domain};
 use k256::PublicKey;
-use reqwest::Client;
+use reqwest::{Client, header::AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, info};
@@ -171,7 +171,7 @@ impl KmsClient {
         let response = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {authorization}"))
+            .header(AUTHORIZATION, format!("Bearer {authorization}"))
             .json(&request_body)
             .send()
             .await?
