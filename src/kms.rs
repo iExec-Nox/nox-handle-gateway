@@ -9,8 +9,8 @@ use thiserror::Error;
 use tracing::{debug, info};
 
 use crate::types::{
-    DelegateAuthorization, KMS_PUBLIC_KEY_EIP712_DOMAIN_NAME, PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME,
-    PublicKeyProof, serialize_bytes, strip_0x_prefix,
+    DelegateAuthorization, EIP_712_DOMAIN_VERSION, KMS_PUBLIC_KEY_EIP712_DOMAIN_NAME,
+    PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME, PublicKeyProof, serialize_bytes, strip_0x_prefix,
 };
 
 #[derive(Debug, Error)]
@@ -118,7 +118,7 @@ impl KmsClient {
 
         let domain = eip712_domain! {
             name: KMS_PUBLIC_KEY_EIP712_DOMAIN_NAME,
-            version: "1",
+            version: EIP_712_DOMAIN_VERSION,
             chain_id: u64::from(chain_id),
         };
         let proof_struct = PublicKeyProof {
@@ -147,19 +147,15 @@ impl KmsClient {
 
     pub async fn get_encrypted_shared_secret(
         &self,
-        ephemeral_pub_key: String,
-        target_pub_key: String,
+        ephemeral_pub_key: &str,
+        target_pub_key: &str,
         signer: &PrivateKeySigner,
         chain_id: u32,
     ) -> Result<String, Error> {
         let url = format!("{}/v0/delegate", self.base_url);
 
-        let authorization = self.build_delegate_authorization(
-            &ephemeral_pub_key,
-            &target_pub_key,
-            signer,
-            chain_id,
-        )?;
+        let authorization =
+            self.build_delegate_authorization(ephemeral_pub_key, target_pub_key, signer, chain_id)?;
 
         info!(
             ephemeral_pub_key = %ephemeral_pub_key,
@@ -168,14 +164,14 @@ impl KmsClient {
         );
 
         let request_body = KmsDelegateRequestBody {
-            ephemeral_pub_key: ephemeral_pub_key.clone(),
-            target_pub_key: target_pub_key.clone(),
+            ephemeral_pub_key: ephemeral_pub_key.to_string(),
+            target_pub_key: target_pub_key.to_string(),
         };
 
         let response = self
             .client
             .post(&url)
-            .header("Authorization", authorization)
+            .header("Authorization", format!("Bearer {authorization}"))
             .json(&request_body)
             .send()
             .await?
@@ -203,7 +199,7 @@ impl KmsClient {
 
         let domain = eip712_domain! {
             name: PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME,
-            version: "1",
+            version: EIP_712_DOMAIN_VERSION,
             chain_id: u64::from(chain_id),
         };
 
