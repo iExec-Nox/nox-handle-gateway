@@ -212,9 +212,16 @@ sol! {
     struct PublicKeyProof {
         string publicKey;
     }
+
+    #[derive(Debug)]
+    struct DelegateAuthorization {
+        string ephemeralPubKey;
+        string targetPubKey;
+    }
 }
 
 pub const KMS_PUBLIC_KEY_EIP712_DOMAIN_NAME: &str = "ProtocolPublicKey";
+pub const PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME: &str = "ProtocolDelegate";
 
 impl HandleProof {
     /// Create a new 137 bytes HandleProof for EIP-712 signing.

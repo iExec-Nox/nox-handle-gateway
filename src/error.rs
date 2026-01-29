@@ -51,6 +51,7 @@ impl AppError {
                 kms::Error::InvalidKey(_) => StatusCode::INTERNAL_SERVER_ERROR,
                 kms::Error::InvalidProof(_) => StatusCode::INTERNAL_SERVER_ERROR,
                 kms::Error::ClientBuild(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                kms::Error::Signing(_) => StatusCode::INTERNAL_SERVER_ERROR,
             },
             AppError::RepositoryError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,

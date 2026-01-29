@@ -175,7 +175,12 @@ pub async fn get_handle_crypto_material(
     );
     let encrypted_shared_secret = state
         .kms_client
-        .get_encrypted_shared_secret(entry.public_key, payload.encryptionPubKey)
+        .get_encrypted_shared_secret(
+            entry.public_key,
+            payload.encryptionPubKey,
+            &state.signer,
+            state.config.chain.id,
+        )
         .await?;
     Ok(Json(GatewayDelegateResponse {
         ciphertext: entry.ciphertext,
