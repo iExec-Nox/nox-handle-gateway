@@ -1,7 +1,7 @@
 use alloy_primitives::hex;
 
 use crate::error::AppError;
-use crate::types::SolidityType;
+use crate::types::{SolidityType, strip_0x_prefix};
 
 /// Decode hex value and validate size matches type.
 pub fn decode_and_validate_value(
@@ -15,7 +15,7 @@ pub fn decode_and_validate_value(
 
 /// Decode hex string (with or without 0x prefix).
 fn decode_hex(value: &str) -> Result<Vec<u8>, AppError> {
-    let trimmed = value.strip_prefix("0x").unwrap_or(value);
+    let trimmed = strip_0x_prefix(value);
 
     if trimmed.is_empty() {
         return Err(AppError::InvalidSolidityValue(
