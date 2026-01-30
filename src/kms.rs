@@ -9,7 +9,8 @@ use thiserror::Error;
 use tracing::{debug, info};
 
 use crate::types::{
-    DelegateAuthorization, DelegateResponse, EIP_712_DOMAIN_VERSION, KMS_PUBLIC_KEY_EIP712_DOMAIN_NAME, PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME, PublicKeyProof,
+    DelegateAuthorization, DelegateResponse, EIP_712_DOMAIN_VERSION,
+    KMS_PUBLIC_KEY_EIP712_DOMAIN_NAME, PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME, PublicKeyProof,
     serialize_bytes, strip_0x_prefix,
 };
 
