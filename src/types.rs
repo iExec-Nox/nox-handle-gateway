@@ -221,6 +221,11 @@ sol! {
         string ephemeralPubKey;
         string targetPubKey;
     }
+
+    #[derive(Debug)]
+    struct DelegateResponse {
+        string encryptedSharedSecret;
+    }
 }
 
 impl HandleProof {

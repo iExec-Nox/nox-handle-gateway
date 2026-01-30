@@ -48,6 +48,7 @@ impl AppError {
             AppError::KmsError(e) => match e {
                 kms::Error::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
                 kms::Error::InvalidResponse(_) => StatusCode::BAD_REQUEST,
+                kms::Error::InvalidResponseSignature(_) => StatusCode::BAD_GATEWAY,
                 kms::Error::InvalidKey(_) => StatusCode::INTERNAL_SERVER_ERROR,
                 kms::Error::InvalidProof(_) => StatusCode::INTERNAL_SERVER_ERROR,
                 kms::Error::ClientBuild(_) => StatusCode::INTERNAL_SERVER_ERROR,
