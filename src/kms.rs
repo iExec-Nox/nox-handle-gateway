@@ -9,8 +9,9 @@ use thiserror::Error;
 use tracing::{debug, info};
 
 use crate::types::{
-    DelegateAuthorization, EIP_712_DOMAIN_VERSION, KMS_PUBLIC_KEY_EIP712_DOMAIN_NAME,
-    PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME, PublicKeyProof, serialize_bytes, strip_0x_prefix,
+    DelegateAuthorization, DelegateResponseProof, EIP_712_DOMAIN_VERSION,
+    KMS_PUBLIC_KEY_EIP712_DOMAIN_NAME, PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME, PublicKeyProof,
+    serialize_bytes, strip_0x_prefix,
 };
 
 #[derive(Debug, Error)]
@@ -23,6 +24,8 @@ pub enum Error {
     InvalidProof(String),
     #[error("Invalid KMS response: {0}")]
     InvalidResponse(String),
+    #[error("Invalid KMS response signature: {0}")]
+    InvalidResponseSignature(String),
     #[error("KMS unavailable: {0}")]
     Unavailable(String),
     #[error("Signing error: {0}")]
@@ -51,6 +54,7 @@ struct KmsDelegateRequestBody {
 #[serde(rename_all = "camelCase")]
 pub struct KmsDelegateResponse {
     pub encrypted_shared_secret: String,
+    pub proof: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -182,7 +186,45 @@ impl KmsClient {
             .await
             .map_err(|e| Error::InvalidResponse(e.to_string()))?;
 
+        self.verify_delegate_response(&data, chain_id)?;
+
         Ok(data.encrypted_shared_secret)
+    }
+
+    fn verify_delegate_response(
+        &self,
+        response: &KmsDelegateResponse,
+        chain_id: u32,
+    ) -> Result<(), Error> {
+        let response_struct = DelegateResponseProof {
+            encryptedSharedSecret: strip_0x_prefix(&response.encrypted_shared_secret).to_string(),
+        };
+
+        let domain = eip712_domain! {
+            name: PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME,
+            version: EIP_712_DOMAIN_VERSION,
+            chain_id: u64::from(chain_id),
+        };
+
+        let signing_hash = response_struct.eip712_signing_hash(&domain);
+
+        let signature_bytes = hex::decode(strip_0x_prefix(&response.proof))
+            .map_err(|e| Error::InvalidResponseSignature(format!("invalid hex: {e}")))?;
+        let proof = Signature::from_raw(&signature_bytes)
+            .map_err(|e| Error::InvalidResponseSignature(format!("invalid proof: {e}")))?;
+        let recovered = proof
+            .recover_address_from_prehash(&signing_hash)
+            .map_err(|e| Error::InvalidResponseSignature(format!("failed to recover: {e}")))?;
+
+        if recovered != self.kms_signer_address {
+            return Err(Error::InvalidResponseSignature(format!(
+                "signer mismatch: expected {}, got {}",
+                self.kms_signer_address, recovered
+            )));
+        }
+
+        debug!("KMS delegate response signature verified");
+        Ok(())
     }
 
     fn build_delegate_authorization(

@@ -24,3 +24,6 @@ target
 # Added by cargo
 
 /target
+
+# Handle Gateway
+gateway_keystore.json
