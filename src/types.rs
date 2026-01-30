@@ -223,7 +223,7 @@ sol! {
     }
 
     #[derive(Debug)]
-    struct DelegateResponse {
+    struct DelegateResponseProof {
         string encryptedSharedSecret;
     }
 }
