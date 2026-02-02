@@ -11,23 +11,26 @@ sol! {
 
 #[derive(Debug, Error)]
 pub enum AclError {
+    #[error("Access denied: not viewer and not publicly decryptable")]
+    AccessDenied,
+    #[error("Failed to build RPC HTTP client: {0}")]
+    ClientBuild(reqwest::Error),
     #[error("ACL misconfigured: {0}")]
     Misconfigured(String),
     #[error("RPC error: {0}")]
     Rpc(String),
-    #[error("Access denied: not viewer and not publicly decryptable")]
-    AccessDenied,
 }
 
 #[derive(Clone)]
 pub struct AclClient {
-    http: Client,
+    client: Client,
     rpc_url: String,
     contract: Address,
 }
 
 impl AclClient {
     pub async fn new(rpc_url: &str, contract: Address) -> Result<Self, AclError> {
+        let client = Client::builder().build().map_err(AclError::ClientBuild)?;
         let rpc_url = rpc_url.trim();
         if rpc_url.is_empty() {
             return Err(AclError::Misconfigured(
@@ -36,7 +39,7 @@ impl AclClient {
         }
 
         Ok(Self {
-            http: Client::new(),
+            client,
             rpc_url: rpc_url.to_string(),
             contract,
         })
@@ -70,7 +73,6 @@ impl AclClient {
 
         let req = JsonRpcRequest {
             jsonrpc: "2.0",
-            id: 1,
             method: "eth_call",
             params: (
                 EthCallObject {
@@ -79,10 +81,11 @@ impl AclClient {
                 },
                 "latest",
             ),
+            id: 1,
         };
 
         let resp = self
-            .http
+            .client
             .post(&self.rpc_url)
             .json(&req)
             .send()
@@ -114,20 +117,20 @@ impl AclClient {
 
 #[derive(Debug, Error)]
 enum RpcCallError {
-    #[error("transport: {0}")]
-    Transport(String),
-    #[error("remote: {0}")]
-    Remote(String),
     #[error("decode: {0}")]
     Decode(String),
+    #[error("remote: {0}")]
+    Remote(String),
+    #[error("transport: {0}")]
+    Transport(String),
 }
 
 #[derive(serde::Serialize)]
 struct JsonRpcRequest<'a> {
     jsonrpc: &'static str,
-    id: u64,
     method: &'static str,
     params: (EthCallObject<'a>, &'static str),
+    id: u64,
 }
 
 #[derive(serde::Serialize)]
