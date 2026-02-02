@@ -10,7 +10,7 @@ jobs:
   build-and-test:
     uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/rust-build.yml@rust-build-v2.0.0
     with:
-      rust-version: '1.92.0'
+      rust-version: '1.93.0'
       working-directory: "."
       enable-cache: true
       publish-crates-io: false
@@ -50,7 +50,7 @@ jobs:
   build-oci-image:
     name: Build OCI image
     needs: prepare
-    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build.yml@docker-build-v2.4.0
+    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build.yml@docker-build-v3.0.0
     with:
       image-name: docker-regis.iex.ec/nox-handle-gateway
       image-tag: ${{ needs.prepare.outputs.image_tag }}
@@ -59,9 +59,9 @@ jobs:
       registry: docker-regis.iex.ec
       push: true
       security-scan: true
-      security-report: "table"
+      security-report: "comment"
       hadolint: true
-      platforms: linux/amd64
+      platform: linux/amd64
     secrets:
       username: ${{ secrets.NEXUS_USERNAME }}
       password: ${{ secrets.NEXUS_PASSWORD }}
