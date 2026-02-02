@@ -25,7 +25,7 @@ pub enum AclError {
 pub struct AclClient {
     client: Client,
     rpc_url: String,
-    contract: Address,
+    contract: String,
 }
 
 impl AclClient {
@@ -41,7 +41,7 @@ impl AclClient {
         Ok(Self {
             client,
             rpc_url: rpc_url.to_string(),
-            contract,
+            contract: contract.to_string(),
         })
     }
 
@@ -68,19 +68,13 @@ impl AclClient {
     }
 
     async fn eth_call_bool(&self, calldata: Vec<u8>) -> Result<bool, RpcCallError> {
-        let to = self.contract.to_string();
+        let to = &self.contract;
         let data = format!("0x{}", hex::encode(calldata));
 
         let req = JsonRpcRequest {
             jsonrpc: "2.0",
             method: "eth_call",
-            params: (
-                EthCallObject {
-                    to: &to,
-                    input: &data,
-                },
-                "latest",
-            ),
+            params: (EthCallObject { to, input: &data }, "latest"),
             id: 1,
         };
 
