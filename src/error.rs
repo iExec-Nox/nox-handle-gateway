@@ -6,11 +6,14 @@ use axum::{
 use serde_json::json;
 use thiserror::Error;
 
+use crate::acl;
 use crate::crypto;
 use crate::kms;
 
 #[derive(Debug, Error)]
 pub enum AppError {
+    #[error("ACL error: {0}")]
+    AclError(#[from] acl::AclError),
     #[error("Cryptographic error: {0}")]
     CryptoError(#[from] crypto::Error),
     #[error("Invalid Solidity type: {0}")]
@@ -30,6 +33,7 @@ pub enum AppError {
 impl AppError {
     fn error_code(&self) -> &'static str {
         match self {
+            AppError::AclError(_) => "acl",
             AppError::CryptoError(_) => "crypto",
             AppError::InvalidSolidityType(_) => "invalid_type",
             AppError::InvalidSolidityValue(_) => "invalid_value",
@@ -42,6 +46,8 @@ impl AppError {
 
     fn status_code(&self) -> StatusCode {
         match self {
+            AppError::AclError(acl::AclError::AccessDenied) => StatusCode::FORBIDDEN,
+            AppError::AclError(_) => StatusCode::SERVICE_UNAVAILABLE,
             AppError::CryptoError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::InvalidSolidityType(_) => StatusCode::BAD_REQUEST,
             AppError::InvalidSolidityValue(_) => StatusCode::BAD_REQUEST,

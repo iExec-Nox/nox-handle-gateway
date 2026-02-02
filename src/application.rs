@@ -12,6 +12,7 @@ use tokio::{net::TcpListener, signal};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{debug, info, warn};
 
+use crate::acl::AclClient;
 use crate::config::Config;
 use crate::crypto::load_or_create_signer;
 use crate::handlers;
@@ -25,6 +26,7 @@ pub struct AppState {
     pub metrics_handle: PrometheusHandle,
     pub repository: DataRepository,
     pub signer: PrivateKeySigner,
+    pub acl_client: AclClient,
 }
 
 pub struct Application {
@@ -68,6 +70,11 @@ impl Application {
 
         let kms_client = KmsClient::new(self.config.kms.url.clone(), self.config.chain.id).await?;
         let repository = DataRepository::new(&self.config.server.backend_url).await?;
+        let acl_client = AclClient::new(
+            &self.config.chain.rpc_url,
+            self.config.chain.tee_compute_manager_contract,
+        )
+        .await?;
 
         let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
         let state = AppState {
@@ -76,6 +83,7 @@ impl Application {
             metrics_handle,
             repository,
             signer,
+            acl_client,
         };
 
         let address = self.config.bind_addr();

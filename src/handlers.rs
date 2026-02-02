@@ -169,6 +169,18 @@ pub async fn get_handle_crypto_material(
     }
 
     let entry = state.repository.fetch_handle(&handle).await?;
+
+    let handle_raw = hex::decode(handle.trim_start_matches("0x"))
+        .map_err(|e| AppError::Unauthorized(e.to_string()))?;
+    if handle_raw.len() != 32 {
+        return Err(AppError::Unauthorized("invalid handle".to_string()));
+    }
+    let handle_b256 = B256::from_slice(&handle_raw);
+    state
+        .acl_client
+        .check_access(handle_b256, payload.userAddress)
+        .await?;
+
     info!(
         "request for handle {} with key {}",
         handle, payload.encryptionPubKey
