@@ -14,6 +14,8 @@ use crate::kms;
 pub enum AppError {
     #[error("ACL error: {0}")]
     AclError(#[from] acl::AclError),
+    #[error("Bad request: {0}")]
+    BadRequest(String),
     #[error("Cryptographic error: {0}")]
     CryptoError(#[from] crypto::Error),
     #[error("Invalid Solidity type: {0}")]
@@ -34,6 +36,7 @@ impl AppError {
     fn error_code(&self) -> &'static str {
         match self {
             AppError::AclError(_) => "acl",
+            AppError::BadRequest(_) => "bad_request",
             AppError::CryptoError(_) => "crypto",
             AppError::InvalidSolidityType(_) => "invalid_type",
             AppError::InvalidSolidityValue(_) => "invalid_value",
@@ -46,8 +49,11 @@ impl AppError {
 
     fn status_code(&self) -> StatusCode {
         match self {
-            AppError::AclError(acl::AclError::AccessDenied) => StatusCode::FORBIDDEN,
-            AppError::AclError(_) => StatusCode::SERVICE_UNAVAILABLE,
+            AppError::AclError(e) => match e {
+                acl::AclError::AccessDenied => StatusCode::FORBIDDEN,
+                _ => StatusCode::SERVICE_UNAVAILABLE,
+            },
+            AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::CryptoError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::InvalidSolidityType(_) => StatusCode::BAD_REQUEST,
             AppError::InvalidSolidityValue(_) => StatusCode::BAD_REQUEST,

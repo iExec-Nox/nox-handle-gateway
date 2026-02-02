@@ -29,7 +29,7 @@ pub struct AclClient {
 }
 
 impl AclClient {
-    pub async fn new(rpc_url: &str, contract: Address) -> Result<Self, AclError> {
+    pub fn new(rpc_url: &str, contract: Address) -> Result<Self, AclError> {
         let client = Client::builder().build().map_err(AclError::ClientBuild)?;
         let rpc_url = rpc_url.trim();
         if rpc_url.is_empty() {

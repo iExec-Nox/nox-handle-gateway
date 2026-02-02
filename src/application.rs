@@ -73,8 +73,7 @@ impl Application {
         let acl_client = AclClient::new(
             &self.config.chain.rpc_url,
             self.config.chain.tee_compute_manager_contract,
-        )
-        .await?;
+        )?;
 
         let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
         let state = AppState {
