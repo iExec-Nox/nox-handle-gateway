@@ -16,9 +16,8 @@ use crate::application::AppState;
 use crate::crypto::ecies_encrypt;
 use crate::error::AppError;
 use crate::repository::HandleEntry;
-use crate::types::{
-    DataAccessAuthorization, Handle, HandleProof, SolidityType, serialize_bytes, strip_0x_prefix,
-};
+use crate::types::{DataAccessAuthorization, Handle, HandleProof, SolidityType};
+use crate::utils::{serialize_bytes, strip_0x_prefix};
 use crate::validation::decode_and_validate_value;
 
 // EIP-712 domain name for HandleProof generation

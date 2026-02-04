@@ -4,6 +4,8 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::utils::strip_0x_prefix;
+
 sol! {
     function isViewer(bytes32 handle, address viewer) external view returns (bool);
 }
@@ -130,7 +132,7 @@ struct JsonRpcError {
 }
 
 fn decode_abi_bool(hex_value: &str) -> Result<bool, &'static str> {
-    let hex_str = hex_value.strip_prefix("0x").unwrap_or(hex_value);
+    let hex_str = strip_0x_prefix(hex_value);
     let bytes = hex::decode(hex_str).map_err(|_| "invalid hex")?;
     if bytes.len() < 32 {
         return Err("invalid ABI bool length");
