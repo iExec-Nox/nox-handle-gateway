@@ -11,7 +11,6 @@ pub struct HandleEntry {
     pub ciphertext: String,
     pub public_key: String,
     pub nonce: String,
-    pub owner: String,
     pub created_at: NaiveDateTime,
 }
 
@@ -30,15 +29,42 @@ impl DataRepository {
         &self,
         entry: &HandleEntry,
     ) -> Result<HandleEntry, sqlx::error::Error> {
+        let mut transaction = self.pool.begin().await?;
+        let result = self.create_handle_in_transaction(&mut transaction, entry)
+            .await?;
+        transaction.commit().await?;
+        Ok(result)
+    }
+
+    pub async fn create_handles(
+        &self,
+        entries: Vec<HandleEntry>,
+    ) -> Result<Vec<HandleEntry>, sqlx::error::Error> {
+        let mut transaction = self.pool.begin().await?;
+        let mut results = Vec::new();
+        for entry in entries {
+            results.push(
+                self.create_handle_in_transaction(&mut transaction, &entry)
+                    .await?,
+            );
+        }
+        transaction.commit().await?;
+        Ok(results)
+    }
+
+    async fn create_handle_in_transaction(
+        &self,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        entry: &HandleEntry,
+    ) -> Result<HandleEntry, sqlx::error::Error> {
         let result = query_as::<_, HandleEntry>(
-            "INSERT INTO handles (handle, ciphertext, public_key, nonce, owner) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+            "INSERT INTO handles (handle, ciphertext, public_key, nonce) VALUES ($1, $2, $3, $4) RETURNING *",
         )
         .bind(&entry.handle)
         .bind(&entry.ciphertext)
         .bind(&entry.public_key)
         .bind(&entry.nonce)
-        .bind(&entry.owner)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut **transaction)
         .await?;
         Ok(result)
     }

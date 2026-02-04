@@ -53,6 +53,7 @@ impl Application {
             .route("/", get(Self::root))
             .route("/health", get(Self::health_check))
             .route("/metrics", get(Self::metrics))
+            .route("/v0/compute/results", post(handlers::publish_results))
             .route("/v0/secrets", post(handlers::create_handle))
             .route(
                 "/v0/secrets/{handle}",
