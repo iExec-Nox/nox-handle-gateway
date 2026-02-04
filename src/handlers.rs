@@ -210,6 +210,7 @@ fn format_timestamp(ts: U256) -> String {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TEEComputeResult {
     chain_id: u32,
     block_number: u64,
@@ -217,15 +218,15 @@ pub struct TEEComputeResult {
     handles: Vec<HandleEntry>,
 }
 
-// TODO checks on chain_id, block_number and transaction_hash
+// TODO missing checks on chain_id, block_number and transaction_hash
 pub async fn publish_results(
     State(state): State<AppState>,
     Json(compute_result): Json<TEEComputeResult>,
 ) -> Result<(), AppError> {
     info!(
-        chain_id=compute_result.chain_id,
-        block_number=compute_result.block_number,
-        transaction_hash=compute_result.transaction_hash,
+        chain_id = compute_result.chain_id,
+        block_number = compute_result.block_number,
+        transaction_hash = compute_result.transaction_hash,
         "Try to publish results in handles database {}",
         compute_result.handles.len()
     );

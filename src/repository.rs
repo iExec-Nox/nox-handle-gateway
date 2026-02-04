@@ -30,7 +30,8 @@ impl DataRepository {
         entry: &HandleEntry,
     ) -> Result<HandleEntry, sqlx::error::Error> {
         let mut transaction = self.pool.begin().await?;
-        let result = self.create_handle_in_transaction(&mut transaction, entry)
+        let result = self
+            .create_handle_in_transaction(&mut transaction, entry)
             .await?;
         transaction.commit().await?;
         Ok(result)
