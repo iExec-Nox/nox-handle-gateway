@@ -140,7 +140,7 @@ impl<'de> Deserialize<'de> for SolidityType {
 /// 32-byte handle
 ///
 /// Layout:
-/// - [0-25]  prehandle: keccak256(ciphertext, acl_contract)[0..26]
+/// - [0-25]  prehandle: keccak256(ciphertext, app)[0..26]
 /// - [26-29] chain_id (big-endian)
 /// - [30]    solidity_type
 /// - [31]    version
@@ -155,14 +155,14 @@ pub struct Handle {
 impl Handle {
     pub fn new(
         ciphertext: &[u8],
-        acl_contract: Address,
+        app: Address,
         chain_id: u32,
         solidity_type: SolidityType,
     ) -> Self {
         // prehandle
         let mut hasher = Keccak256::default();
         hasher.update(ciphertext);
-        hasher.update(acl_contract.as_slice());
+        hasher.update(app.as_slice());
         let hash = hasher.finalize();
 
         let mut prehandle = [0u8; 26];
@@ -200,7 +200,7 @@ sol! {
     struct HandleProof {
         bytes32 handle;
         address owner;
-        address acl;
+        address app;
         uint256 createdAt;
     }
 
@@ -234,13 +234,13 @@ impl HandleProof {
     ///
     /// Layout:
     /// - [0-19]   owner (20 bytes)
-    /// - [20-39]  acl (20 bytes)
+    /// - [20-39]  app (20 bytes)
     /// - [40-71]  createdAt (uint256 BE)
     /// - [72-136] signature (r: 32 + s: 32 + v: 1)
     pub fn to_serialized_bytes(&self, signature: [u8; 65]) -> String {
         let mut bytes = [0u8; 137];
         bytes[0..20].copy_from_slice(self.owner.as_slice());
-        bytes[20..40].copy_from_slice(self.acl.as_slice());
+        bytes[20..40].copy_from_slice(self.app.as_slice());
         bytes[40..72].copy_from_slice(&self.createdAt.to_be_bytes::<32>());
         bytes[72..137].copy_from_slice(&signature);
         serialize_bytes(&bytes)
