@@ -31,6 +31,7 @@ pub struct HandleRequest {
     value: String,
     solidity_type: SolidityType,
     owner: Address,
+    application_contract: Address,
 }
 
 #[derive(Debug, Serialize)]
@@ -65,7 +66,7 @@ pub async fn create_handle(
 
     let handle = Handle::new(
         &ecies_ciphertext.ciphertext,
-        state.config.chain.acl_contract,
+        request.application_contract,
         state.config.chain.id,
         request.solidity_type,
     )
@@ -95,7 +96,7 @@ pub async fn create_handle(
     let proof = HandleProof {
         handle: B256::from(&handle),
         owner: request.owner,
-        acl: state.config.chain.acl_contract,
+        app: request.application_contract,
         createdAt: created_at,
     };
 
@@ -136,7 +137,7 @@ pub async fn get_handle_crypto_material(
         name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(state.config.chain.id),
-        verifying_contract: state.config.chain.acl_contract,
+        verifying_contract: state.config.chain.tee_compute_manager_contract,
     };
     let payload = authorization.payload;
     let hash = payload.eip712_signing_hash(&domain);
