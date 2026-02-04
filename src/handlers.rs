@@ -16,7 +16,8 @@ use crate::application::AppState;
 use crate::crypto::ecies_encrypt;
 use crate::error::AppError;
 use crate::repository::HandleEntry;
-use crate::types::{DataAccessAuthorization, Handle, HandleProof, SolidityType, serialize_bytes};
+use crate::types::{DataAccessAuthorization, Handle, HandleProof, SolidityType};
+use crate::utils::{serialize_bytes, strip_0x_prefix};
 use crate::validation::decode_and_validate_value;
 
 // EIP-712 domain name for HandleProof generation
@@ -139,7 +140,7 @@ pub async fn get_handle_crypto_material(
     };
     let payload = authorization.payload;
     let hash = payload.eip712_signing_hash(&domain);
-    let signature_bytes = hex::decode(authorization.signature.trim_start_matches("0x"))
+    let signature_bytes = hex::decode(strip_0x_prefix(&authorization.signature))
         .map_err(|e| AppError::Unauthorized(e.to_string()))?;
     let signature =
         Signature::from_raw(&signature_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
@@ -168,7 +169,19 @@ pub async fn get_handle_crypto_material(
         ));
     }
 
+    let handle_raw =
+        hex::decode(strip_0x_prefix(&handle)).map_err(|e| AppError::Unauthorized(e.to_string()))?;
+    if handle_raw.len() != 32 {
+        return Err(AppError::Unauthorized("invalid handle".to_string()));
+    }
+    let handle_b256 = B256::from_slice(&handle_raw);
+    state
+        .acl_client
+        .check_access(handle_b256, payload.userAddress)
+        .await?;
+
     let entry = state.repository.fetch_handle(&handle).await?;
+
     info!(
         "request for handle {} with key {}",
         handle, payload.encryptionPubKey

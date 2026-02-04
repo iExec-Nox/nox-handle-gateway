@@ -1,10 +1,11 @@
-use alloy_primitives::{Address, hex};
+use alloy_primitives::Address;
 use alloy_sol_types::sol;
 use serde::{Deserialize, Serialize, Serializer};
 use sha3::{Digest, Keccak256};
 use std::str::FromStr;
 
 use crate::error::AppError;
+use crate::utils::serialize_bytes;
 
 const HANDLE_VERSION: u8 = 0x00; // V0
 pub const EIP_712_DOMAIN_VERSION: &str = "1";
@@ -244,12 +245,4 @@ impl HandleProof {
         bytes[72..137].copy_from_slice(&signature);
         serialize_bytes(&bytes)
     }
-}
-
-pub fn serialize_bytes(bytes: &[u8]) -> String {
-    format!("0x{}", hex::encode(bytes))
-}
-
-pub fn strip_0x_prefix(s: &str) -> &str {
-    s.strip_prefix("0x").unwrap_or(s)
 }

@@ -1,3 +1,4 @@
+pub mod acl;
 pub mod application;
 pub mod config;
 pub mod crypto;
@@ -6,6 +7,7 @@ pub mod handlers;
 pub mod kms;
 pub mod repository;
 pub mod types;
+pub mod utils;
 pub mod validation;
 
 use tracing::{debug, error};

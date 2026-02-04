@@ -11,8 +11,8 @@ use tracing::{debug, info};
 use crate::types::{
     DelegateAuthorization, DelegateResponseProof, EIP_712_DOMAIN_VERSION,
     KMS_PUBLIC_KEY_EIP712_DOMAIN_NAME, PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME, PublicKeyProof,
-    serialize_bytes, strip_0x_prefix,
 };
+use crate::utils::{serialize_bytes, strip_0x_prefix};
 
 #[derive(Debug, Error)]
 pub enum Error {
