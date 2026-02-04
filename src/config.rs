@@ -24,7 +24,6 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChainConfig {
     pub id: u32,
-    pub acl_contract: Address,
     pub tee_compute_manager_contract: Address,
     pub rpc_url: String,
 }
@@ -45,11 +44,7 @@ impl Config {
         let config = ConfigBuilder::builder()
             .set_default("server.host", "0.0.0.0")?
             .set_default("server.port", 3000)?
-            .set_default("chain.id", 1)?
-            .set_default(
-                "chain.acl_contract",
-                "0x0000000000000000000000000000000000000000",
-            )?
+            .set_default("chain.id", 421614)?
             .set_default(
                 "chain.tee_compute_manager_contract",
                 "0x0000000000000000000000000000000000000000",
