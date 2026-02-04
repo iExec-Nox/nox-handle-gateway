@@ -171,9 +171,9 @@ pub async fn get_handle_crypto_material(
     }
 
     let handle_raw =
-        hex::decode(strip_0x_prefix(&handle)).map_err(|e| AppError::Unauthorized(e.to_string()))?;
+        hex::decode(strip_0x_prefix(&handle)).map_err(|e| AppError::BadRequest(e.to_string()))?;
     if handle_raw.len() != 32 {
-        return Err(AppError::Unauthorized("invalid handle".to_string()));
+        return Err(AppError::BadRequest("invalid handle".to_string()));
     }
     let handle_b256 = B256::from_slice(&handle_raw);
     state
