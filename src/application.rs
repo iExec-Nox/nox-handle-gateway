@@ -21,12 +21,12 @@ use crate::repository::DataRepository;
 
 #[derive(Clone)]
 pub struct AppState {
+    pub acl_client: AclClient,
     pub config: Config,
     pub kms_client: KmsClient,
     pub metrics_handle: PrometheusHandle,
     pub repository: DataRepository,
     pub signer: PrivateKeySigner,
-    pub acl_client: AclClient,
 }
 
 pub struct Application {
@@ -68,21 +68,21 @@ impl Application {
         let signer = load_or_create_signer(&self.config.signer)?;
         info!("EIP-712 signer address: {}", signer.address());
 
-        let kms_client = KmsClient::new(self.config.kms.url.clone(), self.config.chain.id).await?;
-        let repository = DataRepository::new(&self.config.server.backend_url).await?;
         let acl_client = AclClient::new(
             &self.config.chain.rpc_url,
             self.config.chain.tee_compute_manager_contract,
         )?;
+        let kms_client = KmsClient::new(self.config.kms.url.clone(), self.config.chain.id).await?;
+        let repository = DataRepository::new(&self.config.server.backend_url).await?;
 
         let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
         let state = AppState {
+            acl_client,
             config: self.config.clone(),
             kms_client,
             metrics_handle,
             repository,
             signer,
-            acl_client,
         };
 
         let address = self.config.bind_addr();

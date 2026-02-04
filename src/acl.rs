@@ -1,12 +1,11 @@
 use alloy_primitives::{Address, B256, hex};
 use alloy_sol_types::{SolCall, sol};
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 sol! {
     function isViewer(bytes32 handle, address viewer) external view returns (bool);
-    function isPubliclyDecryptable(bytes32 handle) external view returns (bool);
 }
 
 #[derive(Debug, Error)]
@@ -17,8 +16,12 @@ pub enum AclError {
     ClientBuild(reqwest::Error),
     #[error("ACL misconfigured: {0}")]
     Misconfigured(String),
-    #[error("RPC error: {0}")]
-    Rpc(String),
+    #[error("RPC call decode: {0}")]
+    RpcCallDecode(String),
+    #[error("RPC call remote: {0}")]
+    RpcCallRemote(String),
+    #[error("RPC call transport: {0}")]
+    RpcCallTransport(String),
 }
 
 #[derive(Clone)]
@@ -50,24 +53,15 @@ impl AclClient {
         let is_viewer = self
             .eth_call_bool(viewer_call.abi_encode())
             .await
-            .map_err(|e| AclError::Rpc(e.to_string()))?;
+            .map_err(|e| AclError::RpcCallDecode(e.to_string()))?;
         if is_viewer {
-            return Ok(());
-        }
-
-        let public_call = isPubliclyDecryptableCall { handle };
-        let is_public = self
-            .eth_call_bool(public_call.abi_encode())
-            .await
-            .map_err(|e| AclError::Rpc(e.to_string()))?;
-        if is_public {
             return Ok(());
         }
 
         Err(AclError::AccessDenied)
     }
 
-    async fn eth_call_bool(&self, calldata: Vec<u8>) -> Result<bool, RpcCallError> {
+    async fn eth_call_bool(&self, calldata: Vec<u8>) -> Result<bool, AclError> {
         let to = &self.contract;
         let data = format!("0x{}", hex::encode(calldata));
 
@@ -84,42 +78,32 @@ impl AclClient {
             .json(&req)
             .send()
             .await
-            .map_err(|e| RpcCallError::Transport(e.to_string()))?;
+            .map_err(|e| AclError::RpcCallTransport(e.to_string()))?;
 
         let status = resp.status();
         let body: JsonRpcResponse = resp
             .json()
             .await
-            .map_err(|e| RpcCallError::Transport(e.to_string()))?;
+            .map_err(|e| AclError::RpcCallTransport(e.to_string()))?;
 
         if let Some(err) = body.error {
-            return Err(RpcCallError::Remote(format!(
+            return Err(AclError::RpcCallRemote(format!(
                 "status {status}: code {}: {}",
                 err.code, err.message
             )));
         }
 
         let Some(result) = body.result else {
-            return Err(RpcCallError::Remote(format!(
+            return Err(AclError::RpcCallRemote(format!(
                 "status {status}: missing result"
             )));
         };
 
-        decode_abi_bool(&result).map_err(|e| RpcCallError::Decode(e.to_string()))
+        decode_abi_bool(&result).map_err(|e| AclError::RpcCallDecode(e.to_string()))
     }
 }
 
-#[derive(Debug, Error)]
-enum RpcCallError {
-    #[error("decode: {0}")]
-    Decode(String),
-    #[error("remote: {0}")]
-    Remote(String),
-    #[error("transport: {0}")]
-    Transport(String),
-}
-
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 struct JsonRpcRequest<'a> {
     jsonrpc: &'static str,
     method: &'static str,
@@ -127,7 +111,7 @@ struct JsonRpcRequest<'a> {
     id: u64,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 struct EthCallObject<'a> {
     to: &'a str,
     input: &'a str,
