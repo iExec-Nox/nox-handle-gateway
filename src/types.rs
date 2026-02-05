@@ -1,8 +1,8 @@
-use alloy_primitives::Address;
-use alloy_sol_types::sol;
-use serde::{Deserialize, Serialize, Serializer};
-use sha3::{Digest, Keccak256};
 use std::str::FromStr;
+
+use alloy_sol_types::sol;
+use k256::elliptic_curve::rand_core::{OsRng, RngCore};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::error::AppError;
 use crate::utils::serialize_bytes;
@@ -140,7 +140,7 @@ impl<'de> Deserialize<'de> for SolidityType {
 /// 32-byte handle
 ///
 /// Layout:
-/// - [0-25]  prehandle: keccak256(ciphertext, app)[0..26]
+/// - [0-25]  prehandle: random 26 bytes
 /// - [26-29] chain_id (big-endian)
 /// - [30]    solidity_type
 /// - [31]    version
@@ -153,35 +153,15 @@ pub struct Handle {
 }
 
 impl Handle {
-    pub fn new(
-        ciphertext: &[u8],
-        app: Address,
-        chain_id: u32,
-        solidity_type: SolidityType,
-    ) -> Self {
-        // prehandle
-        let mut hasher = Keccak256::default();
-        hasher.update(ciphertext);
-        hasher.update(app.as_slice());
-        let hash = hasher.finalize();
-
+    pub fn new(chain_id: u32, solidity_type: SolidityType) -> Self {
         let mut prehandle = [0u8; 26];
-        prehandle.copy_from_slice(&hash[0..26]);
-
-        // chain_id
-        let chain_id = chain_id.to_be_bytes();
-
-        // solidity_type
-        let solidity_type = solidity_type.to_byte();
-
-        // version
-        let version = HANDLE_VERSION;
+        OsRng.fill_bytes(&mut prehandle);
 
         Handle {
             prehandle,
-            chain_id,
-            solidity_type,
-            version,
+            chain_id: chain_id.to_be_bytes(),
+            solidity_type: solidity_type.to_byte(),
+            version: HANDLE_VERSION,
         }
     }
 

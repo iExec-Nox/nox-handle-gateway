@@ -64,13 +64,7 @@ pub async fn create_handle(
     let plaintext = decode_and_validate_value(&request.value, &request.solidity_type)?;
     let ecies_ciphertext = ecies_encrypt(&plaintext, &state.kms_client.public_key)?;
 
-    let handle = Handle::new(
-        &ecies_ciphertext.ciphertext,
-        request.application_contract,
-        state.config.chain.id,
-        request.solidity_type,
-    )
-    .to_bytes();
+    let handle = Handle::new(state.config.chain.id, request.solidity_type).to_bytes();
 
     let serialized_handle = serialize_bytes(&handle);
 
