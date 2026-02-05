@@ -1,7 +1,8 @@
+use std::str::FromStr;
+
 use alloy_sol_types::sol;
 use k256::elliptic_curve::rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize, Serializer};
-use std::str::FromStr;
 
 use crate::error::AppError;
 use crate::utils::serialize_bytes;
