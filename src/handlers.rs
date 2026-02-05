@@ -79,7 +79,6 @@ pub async fn create_handle(
         ciphertext: serialize_bytes(&ecies_ciphertext.ciphertext),
         public_key: serialize_bytes(&ecies_ciphertext.ephemeral_pubkey),
         nonce: serialize_bytes(&ecies_ciphertext.nonce),
-        owner: request.owner.to_string(),
         created_at: NaiveDateTime::default(),
     };
     let new_handle = state.repository.create_handle(&entry).await?;
@@ -209,4 +208,33 @@ fn format_timestamp(ts: U256) -> String {
         .and_then(|secs| Utc.timestamp_opt(secs, 0).single())
         .map(|dt| dt.to_string())
         .unwrap_or_else(|| format!("invalid({ts})"))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TEEComputeResult {
+    chain_id: u32,
+    block_number: u64,
+    transaction_hash: String,
+    handles: Vec<HandleEntry>,
+}
+
+// TODO missing checks on chain_id, block_number and transaction_hash
+pub async fn publish_results(
+    State(state): State<AppState>,
+    Json(compute_result): Json<TEEComputeResult>,
+) -> Result<(), AppError> {
+    info!(
+        chain_id = compute_result.chain_id,
+        block_number = compute_result.block_number,
+        transaction_hash = compute_result.transaction_hash,
+        "Try to publish results in handles database {}",
+        compute_result.handles.len()
+    );
+    // try create all handles in DB single transaction
+    state
+        .repository
+        .create_handles(compute_result.handles)
+        .await?;
+    Ok(())
 }
