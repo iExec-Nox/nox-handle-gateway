@@ -1,4 +1,5 @@
 use chrono::NaiveDateTime;
+use futures::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use sqlx::{
     postgres::{PgPool, PgPoolOptions},
@@ -76,5 +77,20 @@ impl DataRepository {
             .fetch_one(&self.pool)
             .await?;
         Ok(handle)
+    }
+
+    pub async fn read_handles(&self, ids: &Vec<String>) -> Vec<HandleEntry> {
+        let mut stream =
+            sqlx::query_as::<_, HandleEntry>("SELECT * FROM handles WHERE handle = ANY($1)")
+                .bind(ids)
+                .fetch(&self.pool);
+        let mut results: Vec<HandleEntry> = Vec::new();
+        while let Some(handle) = stream.next().await {
+            match handle {
+                Ok(item) => results.push(item),
+                Err(_) => eprintln!("too bad"),
+            }
+        }
+        results
     }
 }

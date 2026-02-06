@@ -18,6 +18,12 @@ pub enum AppError {
     BadRequest(String),
     #[error("Cryptographic error: {0}")]
     CryptoError(#[from] crypto::Error),
+    #[error("Some handle already exists and should not")]
+    HandleConflict,
+    #[error("Expected handle not found")]
+    HandleNotFound,
+    #[error("Handle not prepared for computation")]
+    HandleNotPrepared,
     #[error("Invalid Solidity type: {0}")]
     InvalidSolidityType(String),
     #[error("Invalid Solidity value: {0}")]
@@ -38,6 +44,9 @@ impl AppError {
             AppError::AclError(_) => "acl",
             AppError::BadRequest(_) => "bad_request",
             AppError::CryptoError(_) => "crypto",
+            AppError::HandleConflict => "handle",
+            AppError::HandleNotFound => "hadle",
+            AppError::HandleNotPrepared => "handle",
             AppError::InvalidSolidityType(_) => "invalid_type",
             AppError::InvalidSolidityValue(_) => "invalid_value",
             AppError::KmsError(_) => "kms",
@@ -55,6 +64,8 @@ impl AppError {
             },
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::CryptoError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::HandleConflict | AppError::HandleNotFound => StatusCode::BAD_REQUEST,
+            AppError::HandleNotPrepared => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::InvalidSolidityType(_) => StatusCode::BAD_REQUEST,
             AppError::InvalidSolidityValue(_) => StatusCode::BAD_REQUEST,
             AppError::KmsError(e) => match e {

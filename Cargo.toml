@@ -16,6 +16,7 @@ base64 = "0.22.1"
 chrono = { version = "0.4.42", features = ["serde"] }
 config = "0.15.19"
 config-secret = "0.1.0"
+futures = "0.3.31"
 hkdf = "0.12.4"
 k256 = { version = "0.13.4", features = ["ecdh"] }
 metrics-exporter-prometheus = "0.18.1"
