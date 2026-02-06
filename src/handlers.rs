@@ -228,7 +228,7 @@ pub async fn get_operand_handles(
     let result_handles: Vec<HandleEntry> = state
         .repository
         .read_handles(&compute_request.results)
-        .await;
+        .await?;
     debug!("result handles count {}", result_handles.len());
     if !result_handles.is_empty() {
         let unexpected_handles: Vec<String> = result_handles
@@ -241,13 +241,13 @@ pub async fn get_operand_handles(
     let operand_handles: Vec<HandleEntry> = state
         .repository
         .read_handles(&compute_request.operands)
-        .await;
+        .await?;
     debug!("operand handles count {}", operand_handles.len());
     if operand_handles.len() != compute_request.operands.len() {
         let missing_handles: Vec<String> = operand_handles
             .iter()
             .map(|entry| entry.handle.clone())
-            .filter(|handle| compute_request.operands.contains(handle))
+            .filter(|handle| !compute_request.operands.contains(handle))
             .collect();
         error!("expected operand handles not found in handle database {missing_handles:?}");
         return Err(AppError::HandleNotFound);
@@ -270,7 +270,7 @@ pub async fn get_operand_handles(
         let missing_handles: Vec<String> = operands_crypto_material
             .iter()
             .map(|crypto_material| crypto_material.handle.clone())
-            .filter(|handle| compute_request.operands.contains(handle))
+            .filter(|handle| !compute_request.operands.contains(handle))
             .collect();
         error!("expected operand handles not prepared {missing_handles:?}");
         return Err(AppError::HandleNotPrepared);
@@ -292,7 +292,7 @@ async fn get_crypto_material_for_entry(
         ciphertext = entry.ciphertext,
         encrypted_shared_secret = encrypted_shared_secret,
         iv = entry.nonce,
-        "GatewayDelegateReponse"
+        "GatewayDelegateResponse"
     );
     Ok(GatewayDelegateResponse {
         handle: entry.handle.clone(),

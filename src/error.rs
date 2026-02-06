@@ -45,7 +45,7 @@ impl AppError {
             AppError::BadRequest(_) => "bad_request",
             AppError::CryptoError(_) => "crypto",
             AppError::HandleConflict => "handle",
-            AppError::HandleNotFound => "hadle",
+            AppError::HandleNotFound => "handle",
             AppError::HandleNotPrepared => "handle",
             AppError::InvalidSolidityType(_) => "invalid_type",
             AppError::InvalidSolidityValue(_) => "invalid_value",
