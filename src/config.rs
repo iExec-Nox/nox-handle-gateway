@@ -11,6 +11,7 @@ pub struct Config {
     pub server: ServerConfig,
     pub chain: ChainConfig,
     pub kms: KmsConfig,
+    pub s3: S3Config,
     pub signer: SignerConfig,
 }
 
@@ -18,7 +19,16 @@ pub struct Config {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
-    pub backend_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct S3Config {
+    pub endpoint_url: String,
+    pub bucket: String,
+    pub access_key: String,
+    pub secret_key: String,
+    pub region: String,
+    pub timeout: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -44,12 +54,18 @@ impl Config {
         let config = ConfigBuilder::builder()
             .set_default("server.host", "0.0.0.0")?
             .set_default("server.port", 3000)?
+            .set_default("s3.endpoint_url", "http://localhost:9900")?
+            .set_default("s3.bucket", "handles")?
+            .set_default("s3.access_key", "minioAccessKey")?
+            .set_default("s3.secret_key", "minioSecretKey")?
+            .set_default("s3.region", "us-east-1")?
+            .set_default("s3.timeout", 30)?
             .set_default("chain.id", 421614)?
             .set_default(
                 "chain.tee_compute_manager_contract",
                 "0x0000000000000000000000000000000000000000",
             )?
-            .set_default("chain.rpc_url", "")?
+            .set_default("chain.rpc_url", "https://sepolia-rollup.arbitrum.io/rpc")?
             .set_default("kms.url", "http://localhost:9000")?
             .set_default("signer.keystore_filename", "gateway_keystore.json")?
             .set_default("signer.keystore_password", "")?

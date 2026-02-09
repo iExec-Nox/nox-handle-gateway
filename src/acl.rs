@@ -3,6 +3,7 @@ use alloy_sol_types::{SolCall, sol};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tracing::warn;
 
 use crate::utils::strip_0x_prefix;
 
@@ -30,7 +31,7 @@ pub enum AclError {
 pub struct AclClient {
     client: Client,
     rpc_url: String,
-    contract: String,
+    contract: Address,
 }
 
 impl AclClient {
@@ -46,11 +47,16 @@ impl AclClient {
         Ok(Self {
             client,
             rpc_url: rpc_url.to_string(),
-            contract: contract.to_string(),
+            contract,
         })
     }
 
     pub async fn check_access(&self, handle: B256, viewer: Address) -> Result<(), AclError> {
+        if self.contract == Address::ZERO {
+            warn!("ACL check skipped: contract is zero address (dev mode)");
+            return Ok(());
+        }
+
         let viewer_call = isViewerCall { handle, viewer };
         let is_viewer = self
             .eth_call_bool(viewer_call.abi_encode())
@@ -64,13 +70,19 @@ impl AclClient {
     }
 
     async fn eth_call_bool(&self, calldata: Vec<u8>) -> Result<bool, AclError> {
-        let to = &self.contract;
+        let to = self.contract.to_string();
         let data = format!("0x{}", hex::encode(calldata));
 
         let req = JsonRpcRequest {
             jsonrpc: "2.0",
             method: "eth_call",
-            params: (EthCallObject { to, input: &data }, "latest"),
+            params: (
+                EthCallObject {
+                    to: &to,
+                    input: &data,
+                },
+                "latest",
+            ),
             id: 1,
         };
 

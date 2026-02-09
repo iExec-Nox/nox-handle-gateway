@@ -1,11 +1,11 @@
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{
-    postgres::{PgPool, PgPoolOptions},
-    query_as,
-};
 
-#[derive(Deserialize, Serialize, sqlx::FromRow)]
+use crate::config::S3Config;
+use crate::s3::{S3Client, S3Error};
+use crate::utils::strip_0x_prefix;
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HandleEntry {
     pub handle: String,
     pub ciphertext: String,
@@ -16,65 +16,55 @@ pub struct HandleEntry {
 
 #[derive(Clone)]
 pub struct DataRepository {
-    pool: PgPool,
+    s3: S3Client,
 }
 
 impl DataRepository {
-    pub async fn new(url: &str) -> Result<Self, sqlx::error::Error> {
-        let pool = PgPoolOptions::new().max_connections(5).connect(url).await?;
-        Ok(Self { pool })
+    pub async fn new(config: &S3Config) -> Self {
+        let s3 = S3Client::new(config).await;
+        Self { s3 }
     }
 
-    pub async fn create_handle(
-        &self,
-        entry: &HandleEntry,
-    ) -> Result<HandleEntry, sqlx::error::Error> {
-        let mut transaction = self.pool.begin().await?;
-        let result = self
-            .create_handle_in_transaction(&mut transaction, entry)
-            .await?;
-        transaction.commit().await?;
-        Ok(result)
+    pub async fn create_handle(&self, entry: &HandleEntry) -> Result<HandleEntry, S3Error> {
+        let mut entry = entry.clone();
+        entry.created_at = Utc::now().naive_utc();
+
+        let data = serde_json::to_vec(&entry).map_err(|e| S3Error::S3Operation {
+            message: format!("Failed to serialize entry: {e}"),
+        })?;
+
+        let metadata = vec![
+            ("handle".to_string(), entry.handle.clone()),
+            ("created-at".to_string(), entry.created_at.to_string()),
+        ];
+
+        let key = strip_0x_prefix(&entry.handle);
+
+        self.s3.put_if_not_exist(key, &data, metadata).await?;
+
+        Ok(entry)
     }
 
     pub async fn create_handles(
         &self,
         entries: Vec<HandleEntry>,
-    ) -> Result<Vec<HandleEntry>, sqlx::error::Error> {
-        let mut transaction = self.pool.begin().await?;
-        let mut results = Vec::new();
+    ) -> Result<Vec<HandleEntry>, S3Error> {
+        let mut results = Vec::with_capacity(entries.len());
         for entry in entries {
-            results.push(
-                self.create_handle_in_transaction(&mut transaction, &entry)
-                    .await?,
-            );
+            results.push(self.create_handle(&entry).await?);
         }
-        transaction.commit().await?;
         Ok(results)
     }
 
-    async fn create_handle_in_transaction(
-        &self,
-        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        entry: &HandleEntry,
-    ) -> Result<HandleEntry, sqlx::error::Error> {
-        let result = query_as::<_, HandleEntry>(
-            "INSERT INTO handles (handle, ciphertext, public_key, nonce) VALUES ($1, $2, $3, $4) RETURNING *",
-        )
-        .bind(&entry.handle)
-        .bind(&entry.ciphertext)
-        .bind(&entry.public_key)
-        .bind(&entry.nonce)
-        .fetch_one(&mut **transaction)
-        .await?;
-        Ok(result)
-    }
+    pub async fn fetch_handle(&self, handle: &str) -> Result<HandleEntry, S3Error> {
+        let key = strip_0x_prefix(handle);
+        let data = self.s3.get(key).await?;
 
-    pub async fn fetch_handle(&self, id: &str) -> Result<HandleEntry, sqlx::error::Error> {
-        let handle = query_as::<_, HandleEntry>("SELECT * FROM handles WHERE handle = $1")
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(handle)
+        let entry: HandleEntry =
+            serde_json::from_slice(&data).map_err(|e| S3Error::S3Operation {
+                message: format!("Failed to deserialize entry: {e}"),
+            })?;
+
+        Ok(entry)
     }
 }
