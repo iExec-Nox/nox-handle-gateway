@@ -225,6 +225,8 @@ pub async fn get_operand_handles(
 ) -> Result<Json<Vec<GatewayDelegateResponse>>, AppError> {
     // TODO check caller has permissions
     debug!("preparing handles for caller {}", compute_request.caller);
+
+    let mut conflicting_result_handles = false;
     let result_handles: Vec<HandleEntry> = state
         .repository
         .read_handles(&compute_request.results)
@@ -236,8 +238,10 @@ pub async fn get_operand_handles(
             .map(|entry| entry.handle.clone())
             .collect();
         error!("unexpected result handles found in handle database {unexpected_handles:?}");
-        return Err(AppError::HandleConflict);
+        conflicting_result_handles = true;
     }
+
+    let mut missing_operand_handles = false;
     let operand_handles: Vec<HandleEntry> = state
         .repository
         .read_handles(&compute_request.operands)
@@ -250,8 +254,14 @@ pub async fn get_operand_handles(
             .filter(|handle| !compute_request.operands.contains(handle))
             .collect();
         error!("expected operand handles not found in handle database {missing_handles:?}");
-        return Err(AppError::HandleNotFound);
+        missing_operand_handles = true;
     }
+    if conflicting_result_handles || missing_operand_handles {
+        return Err(AppError::BadRequest(format!(
+            "impossible to perform computation [conflicting_result_handles:{conflicting_result_handles}, missing_operand_handles:{missing_operand_handles}]"
+        )));
+    }
+
     let operands_crypto_material: Vec<GatewayDelegateResponse> =
         join_all(operand_handles.iter().map(|entry| {
             get_crypto_material_for_entry(
@@ -273,7 +283,7 @@ pub async fn get_operand_handles(
             .filter(|handle| !compute_request.operands.contains(handle))
             .collect();
         error!("expected operand handles not prepared {missing_handles:?}");
-        return Err(AppError::HandleNotPrepared);
+        return Err(AppError::OperandsNotPrepared);
     }
     Ok(Json(operands_crypto_material))
 }

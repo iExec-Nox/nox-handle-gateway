@@ -18,18 +18,14 @@ pub enum AppError {
     BadRequest(String),
     #[error("Cryptographic error: {0}")]
     CryptoError(#[from] crypto::Error),
-    #[error("Some handle already exists and should not")]
-    HandleConflict,
-    #[error("Expected handle not found")]
-    HandleNotFound,
-    #[error("Handle not prepared for computation")]
-    HandleNotPrepared,
     #[error("Invalid Solidity type: {0}")]
     InvalidSolidityType(String),
     #[error("Invalid Solidity value: {0}")]
     InvalidSolidityValue(String),
     #[error("KMS error: {0}")]
     KmsError(#[from] kms::Error),
+    #[error("Operands not prepared for computation")]
+    OperandsNotPrepared,
     #[error("Database error: {0}")]
     RepositoryError(#[from] sqlx::error::Error),
     #[error("Signing error: {0}")]
@@ -44,12 +40,10 @@ impl AppError {
             AppError::AclError(_) => "acl",
             AppError::BadRequest(_) => "bad_request",
             AppError::CryptoError(_) => "crypto",
-            AppError::HandleConflict => "handle",
-            AppError::HandleNotFound => "handle",
-            AppError::HandleNotPrepared => "handle",
             AppError::InvalidSolidityType(_) => "invalid_type",
             AppError::InvalidSolidityValue(_) => "invalid_value",
             AppError::KmsError(_) => "kms",
+            AppError::OperandsNotPrepared => "operands",
             AppError::RepositoryError(_) => "repository",
             AppError::SigningError(_) => "signing",
             AppError::Unauthorized(_) => "unauthorized",
@@ -64,8 +58,6 @@ impl AppError {
             },
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::CryptoError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::HandleConflict | AppError::HandleNotFound => StatusCode::BAD_REQUEST,
-            AppError::HandleNotPrepared => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::InvalidSolidityType(_) => StatusCode::BAD_REQUEST,
             AppError::InvalidSolidityValue(_) => StatusCode::BAD_REQUEST,
             AppError::KmsError(e) => match e {
@@ -73,6 +65,7 @@ impl AppError {
                 kms::Error::InvalidResponse(_) => StatusCode::BAD_REQUEST,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
+            AppError::OperandsNotPrepared => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::RepositoryError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
