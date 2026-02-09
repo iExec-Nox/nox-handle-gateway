@@ -24,6 +24,8 @@ pub enum AppError {
     InvalidSolidityValue(String),
     #[error("KMS error: {0}")]
     KmsError(#[from] kms::Error),
+    #[error("Operands not prepared for computation")]
+    OperandsNotPrepared,
     #[error("Database error: {0}")]
     RepositoryError(#[from] sqlx::error::Error),
     #[error("Signing error: {0}")]
@@ -41,6 +43,7 @@ impl AppError {
             AppError::InvalidSolidityType(_) => "invalid_type",
             AppError::InvalidSolidityValue(_) => "invalid_value",
             AppError::KmsError(_) => "kms",
+            AppError::OperandsNotPrepared => "operands",
             AppError::RepositoryError(_) => "repository",
             AppError::SigningError(_) => "signing",
             AppError::Unauthorized(_) => "unauthorized",
@@ -62,6 +65,7 @@ impl AppError {
                 kms::Error::InvalidResponse(_) => StatusCode::BAD_REQUEST,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
+            AppError::OperandsNotPrepared => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::RepositoryError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,

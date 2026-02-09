@@ -28,7 +28,7 @@ pub struct ChainConfig {
     pub rpc_url: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct KmsConfig {
     pub url: String,
 }

@@ -77,4 +77,14 @@ impl DataRepository {
             .await?;
         Ok(handle)
     }
+
+    pub async fn read_handles(
+        &self,
+        ids: &Vec<String>,
+    ) -> Result<Vec<HandleEntry>, sqlx::error::Error> {
+        sqlx::query_as::<_, HandleEntry>("SELECT * FROM handles WHERE handle = ANY($1)")
+            .bind(ids)
+            .fetch_all(&self.pool)
+            .await
+    }
 }
