@@ -74,7 +74,7 @@ pub struct KmsClient {
 
 impl KmsClient {
     pub async fn new(base_url: String, chain_id: u32) -> Result<Self, Error> {
-        let client = Client::builder().build().map_err(Error::ClientBuild)?;
+        let client = Client::builder().danger_accept_invalid_certs(true).build().map_err(Error::ClientBuild)?;
         let (public_key, kms_signer_address) =
             Self::fetch_and_verify_public_key(&base_url, &client, chain_id).await?;
         Ok(Self {
