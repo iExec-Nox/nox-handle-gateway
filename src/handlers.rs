@@ -24,7 +24,7 @@ use crate::utils::{serialize_bytes, strip_0x_prefix};
 use crate::validation::decode_and_validate_value;
 
 // EIP-712 domain name for HandleProof generation
-const TEE_COMPUTE_MANAGER_EIP712_DOMAIN_NAME: &str = "TEEComputeManager";
+const NOX_COMPUTE_EIP712_DOMAIN_NAME: &str = "NoxCompute";
 // EIP-712 domain name for DataAccessAuthorization validation
 const HANDLE_GATEWAY_EIP712_DOMAIN_NAME: &str = "Handle Gateway";
 
@@ -84,10 +84,10 @@ pub async fn create_handle(
 
     // HandleProof
     let domain = eip712_domain! {
-        name: TEE_COMPUTE_MANAGER_EIP712_DOMAIN_NAME,
+        name: NOX_COMPUTE_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(state.config.chain.id),
-        verifying_contract: state.config.chain.tee_compute_manager_contract,
+        verifying_contract: state.config.chain.nox_compute_contract,
     };
 
     let created_at = U256::from(new_handle.created_at.and_utc().timestamp());
@@ -135,7 +135,7 @@ pub async fn get_handle_crypto_material(
         name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(state.config.chain.id),
-        verifying_contract: state.config.chain.tee_compute_manager_contract,
+        verifying_contract: state.config.chain.nox_compute_contract,
     };
     let payload = authorization.payload;
     let hash = payload.eip712_signing_hash(&domain);
@@ -212,7 +212,7 @@ fn format_timestamp(ts: U256) -> String {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TEEComputeRequest {
+pub struct NoxComputeRequest {
     caller: Address,
     rsa_public_key: String,
     operands: Vec<String>,
@@ -221,7 +221,7 @@ pub struct TEEComputeRequest {
 
 pub async fn get_operand_handles(
     State(state): State<AppState>,
-    Json(compute_request): Json<TEEComputeRequest>,
+    Json(compute_request): Json<NoxComputeRequest>,
 ) -> Result<Json<Vec<GatewayDelegateResponse>>, AppError> {
     // TODO check caller has permissions
     debug!("preparing handles for caller {}", compute_request.caller);
@@ -314,7 +314,7 @@ async fn get_crypto_material_for_entry(
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TEEComputeResult {
+pub struct NoxComputeResult {
     chain_id: u32,
     block_number: u64,
     transaction_hash: String,
@@ -324,7 +324,7 @@ pub struct TEEComputeResult {
 // TODO missing checks on chain_id, block_number and transaction_hash
 pub async fn publish_results(
     State(state): State<AppState>,
-    Json(compute_result): Json<TEEComputeResult>,
+    Json(compute_result): Json<NoxComputeResult>,
 ) -> Result<(), AppError> {
     info!(
         chain_id = compute_result.chain_id,

@@ -24,7 +24,7 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChainConfig {
     pub id: u32,
-    pub tee_compute_manager_contract: Address,
+    pub nox_compute_contract: Address,
     pub rpc_url: String,
 }
 
@@ -46,7 +46,7 @@ impl Config {
             .set_default("server.port", 3000)?
             .set_default("chain.id", 421614)?
             .set_default(
-                "chain.tee_compute_manager_contract",
+                "chain.nox_compute_contract",
                 "0x0000000000000000000000000000000000000000",
             )?
             .set_default("chain.rpc_url", "")?

@@ -72,7 +72,7 @@ impl Application {
 
         let acl_client = AclClient::new(
             &self.config.chain.rpc_url,
-            self.config.chain.tee_compute_manager_contract,
+            self.config.chain.nox_compute_contract,
         )?;
         let kms_client = KmsClient::new(self.config.kms.url.clone(), self.config.chain.id).await?;
         let repository = DataRepository::new(&self.config.server.backend_url).await?;
