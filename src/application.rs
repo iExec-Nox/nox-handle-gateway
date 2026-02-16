@@ -74,7 +74,13 @@ impl Application {
             &self.config.chain.rpc_url,
             self.config.chain.tee_compute_manager_contract,
         )?;
-        let kms_client = KmsClient::new(self.config.kms.url.clone(), self.config.chain.id).await?;
+        let kms_client = KmsClient::new(
+            self.config.kms.url.clone(),
+            &self.config.chain.rpc_url,
+            self.config.chain.tee_compute_manager_contract,
+            self.config.kms.signer_address,
+        )
+        .await?;
         let repository = DataRepository::new(&self.config.server.backend_url).await?;
 
         let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();

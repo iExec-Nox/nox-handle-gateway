@@ -1,18 +1,23 @@
 use alloy_primitives::{Address, hex};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{SolStruct, eip712_domain};
+use alloy_sol_types::{SolCall, SolStruct, eip712_domain, sol};
 use k256::PublicKey;
 use reqwest::{Client, header::AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, info};
 
+use crate::rpc::{self, RpcError};
 use crate::types::{
     DelegateAuthorization, DelegateResponseProof, EIP_712_DOMAIN_VERSION,
-    KMS_PUBLIC_KEY_EIP712_DOMAIN_NAME, PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME, PublicKeyProof,
+    PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME,
 };
 use crate::utils::{serialize_bytes, strip_0x_prefix};
+
+sol! {
+    function kmsPublicKey() external view returns (bytes memory);
+}
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -20,14 +25,14 @@ pub enum Error {
     ClientBuild(reqwest::Error),
     #[error("Invalid KMS public key: {0}")]
     InvalidKey(String),
-    #[error("Invalid KMS proof: {0}")]
-    InvalidProof(String),
     #[error("Invalid KMS response: {0}")]
     InvalidResponse(String),
     #[error("Invalid KMS response signature: {0}")]
     InvalidResponseSignature(String),
     #[error("KMS unavailable: {0}")]
     Unavailable(String),
+    #[error("RPC call failed: {0}")]
+    Rpc(#[from] RpcError),
     #[error("Signing error: {0}")]
     Signing(String),
 }
@@ -57,13 +62,6 @@ pub struct KmsDelegateResponse {
     pub proof: String,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct KmsPublicKeyResponse {
-    public_key: String,
-    proof: String,
-}
-
 #[derive(Clone)]
 pub struct KmsClient {
     pub client: Client,
@@ -73,10 +71,22 @@ pub struct KmsClient {
 }
 
 impl KmsClient {
-    pub async fn new(base_url: String, chain_id: u32) -> Result<Self, Error> {
+    pub async fn new(
+        base_url: String,
+        rpc_url: &str,
+        contract_address: Address,
+        kms_signer_address: Address,
+    ) -> Result<Self, Error> {
         let client = Client::builder().build().map_err(Error::ClientBuild)?;
-        let (public_key, kms_signer_address) =
-            Self::fetch_and_verify_public_key(&base_url, &client, chain_id).await?;
+        let public_key =
+            Self::fetch_public_key_from_chain(rpc_url, contract_address, &client).await?;
+
+        info!(
+            kms_public_key = %hex::encode(public_key.to_sec1_bytes()),
+            kms_signer_address = %kms_signer_address,
+            "KMS public key fetched from chain"
+        );
+
         Ok(Self {
             client,
             base_url: base_url.trim_end_matches('/').to_string(),
@@ -85,68 +95,26 @@ impl KmsClient {
         })
     }
 
-    async fn fetch_and_verify_public_key(
-        base_url: &str,
+    async fn fetch_public_key_from_chain(
+        rpc_url: &str,
+        contract_address: Address,
         client: &Client,
-        chain_id: u32,
-    ) -> Result<(PublicKey, Address), Error> {
-        let base = base_url.trim_end_matches('/');
-        let url = format!("{base}/v0/public-key");
-        debug!("Fetching KMS public key from {url}");
+    ) -> Result<PublicKey, Error> {
+        let call = kmsPublicKeyCall {};
+        let contract = contract_address.to_string();
 
-        let response = client.get(&url).send().await?.error_for_status()?;
+        debug!("Fetching KMS public key from chain via eth_call to {contract}");
 
-        let body: KmsPublicKeyResponse = response
-            .json()
-            .await
-            .map_err(|e| Error::InvalidResponse(e.to_string()))?;
+        let result = rpc::eth_call(client, rpc_url, &contract, &call.abi_encode()).await?;
 
-        let (public_key, kms_signer_address) =
-            Self::parse_and_verify_public_key(&body.public_key, &body.proof, chain_id)?;
+        let result_bytes = hex::decode(strip_0x_prefix(&result))
+            .map_err(|e| Error::InvalidKey(format!("invalid hex in RPC result: {e}")))?;
 
-        info!(
-            kms_public_key = %body.public_key,
-            kms_signer_address = %kms_signer_address,
-            "KMS public key verified"
-        );
+        let return_data = kmsPublicKeyCall::abi_decode_returns(&result_bytes)
+            .map_err(|e| Error::InvalidKey(format!("ABI decode failed: {e}")))?;
 
-        Ok((public_key, kms_signer_address))
-    }
-
-    fn parse_and_verify_public_key(
-        public_key_hex: &str,
-        proof_hex: &str,
-        chain_id: u32,
-    ) -> Result<(PublicKey, Address), Error> {
-        let public_key_raw = strip_0x_prefix(public_key_hex);
-
-        let domain = eip712_domain! {
-            name: KMS_PUBLIC_KEY_EIP712_DOMAIN_NAME,
-            version: EIP_712_DOMAIN_VERSION,
-            chain_id: u64::from(chain_id),
-        };
-        let proof_struct = PublicKeyProof {
-            publicKey: public_key_raw.to_string(),
-        };
-        let signing_hash = proof_struct.eip712_signing_hash(&domain);
-
-        let signature_bytes = hex::decode(strip_0x_prefix(proof_hex))
-            .map_err(|e| Error::InvalidProof(format!("invalid hex: {e}")))?;
-        let signature = Signature::from_raw(&signature_bytes)
-            .map_err(|e| Error::InvalidProof(format!("invalid signature: {e}")))?;
-
-        // TODO: Validate recovered address against a pre-configured or on-chain source.
-        // Currently we only verify that recovery succeeds; address validation deferred to future PR.
-        let signer_address = signature
-            .recover_address_from_prehash(&signing_hash)
-            .map_err(|e| Error::InvalidProof(format!("failed to recover address: {e}")))?;
-
-        let public_key_bytes = hex::decode(public_key_raw)
-            .map_err(|e| Error::InvalidKey(format!("invalid hex: {e}")))?;
-        let public_key = PublicKey::from_sec1_bytes(&public_key_bytes)
-            .map_err(|e| Error::InvalidKey(format!("invalid SEC1 public key: {e}")))?;
-
-        Ok((public_key, signer_address))
+        PublicKey::from_sec1_bytes(&return_data.0)
+            .map_err(|e| Error::InvalidKey(format!("invalid SEC1 public key: {e}")))
     }
 
     pub async fn get_encrypted_shared_secret(
