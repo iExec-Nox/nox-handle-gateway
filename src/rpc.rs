@@ -1,8 +1,9 @@
 use alloy_primitives::{Address, B256};
-use alloy_provider::ProviderBuilder;
+use alloy_provider::RootProvider;
 use alloy_sol_types::sol;
 use k256::PublicKey;
 use thiserror::Error;
+use url::Url;
 
 sol! {
     #[sol(rpc)]
@@ -26,7 +27,7 @@ pub enum RpcError {
 
 #[derive(Clone)]
 pub struct ChainClient {
-    rpc_url: String,
+    provider: RootProvider,
     contract_address: Address,
 }
 
@@ -36,18 +37,18 @@ impl ChainClient {
         if rpc_url.is_empty() {
             return Err(RpcError::Transport("RPC URL is required".to_string()));
         }
+        let url: Url = rpc_url
+            .parse()
+            .map_err(|e| RpcError::Transport(format!("invalid RPC URL: {e}")))?;
+        let provider = RootProvider::new_http(url);
         Ok(Self {
-            rpc_url: rpc_url.to_string(),
+            provider,
             contract_address,
         })
     }
 
     pub async fn kms_public_key(&self) -> Result<PublicKey, RpcError> {
-        let provider = ProviderBuilder::new()
-            .connect(&self.rpc_url)
-            .await
-            .map_err(|e| RpcError::Transport(e.to_string()))?;
-        let contract = NoxCompute::new(self.contract_address, &provider);
+        let contract = NoxCompute::new(self.contract_address, &self.provider);
         let result = contract
             .kmsPublicKey()
             .call()
@@ -57,11 +58,7 @@ impl ChainClient {
     }
 
     pub async fn check_access(&self, handle: B256, viewer: Address) -> Result<(), RpcError> {
-        let provider = ProviderBuilder::new()
-            .connect(&self.rpc_url)
-            .await
-            .map_err(|e| RpcError::Transport(e.to_string()))?;
-        let contract = NoxCompute::new(self.contract_address, &provider);
+        let contract = NoxCompute::new(self.contract_address, &self.provider);
         let is_viewer = contract
             .isViewer(handle, viewer)
             .call()
