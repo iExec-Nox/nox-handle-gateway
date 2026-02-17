@@ -12,16 +12,16 @@ use tokio::{net::TcpListener, signal};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{debug, info, warn};
 
-use crate::acl::AclClient;
 use crate::config::Config;
 use crate::crypto::load_or_create_signer;
 use crate::handlers;
 use crate::kms::KmsClient;
 use crate::repository::DataRepository;
+use crate::rpc::ChainClient;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub acl_client: AclClient,
+    pub chain_client: ChainClient,
     pub config: Config,
     pub kms_client: KmsClient,
     pub metrics_handle: PrometheusHandle,
@@ -70,22 +70,21 @@ impl Application {
         let signer = load_or_create_signer(&self.config.signer)?;
         info!("EIP-712 signer address: {}", signer.address());
 
-        let acl_client = AclClient::new(
+        let chain_client = ChainClient::new(
             &self.config.chain.rpc_url,
             self.config.chain.nox_compute_contract,
         )?;
+        let kms_public_key = chain_client.kms_public_key().await?;
         let kms_client = KmsClient::new(
             self.config.kms.url.clone(),
-            &self.config.chain.rpc_url,
-            self.config.chain.nox_compute_contract,
+            kms_public_key,
             self.config.kms.signer_address,
-        )
-        .await?;
+        )?;
         let repository = DataRepository::new(&self.config.server.backend_url).await?;
 
         let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
         let state = AppState {
-            acl_client,
+            chain_client,
             config: self.config.clone(),
             kms_client,
             metrics_handle,

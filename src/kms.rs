@@ -1,38 +1,29 @@
 use alloy_primitives::{Address, hex};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{SolCall, SolStruct, eip712_domain, sol};
+use alloy_sol_types::{SolStruct, eip712_domain};
 use k256::PublicKey;
 use reqwest::{Client, header::AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, info};
 
-use crate::rpc::{self, RpcError};
 use crate::types::{
     DelegateAuthorization, DelegateResponseProof, EIP_712_DOMAIN_VERSION,
     PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME,
 };
 use crate::utils::{serialize_bytes, strip_0x_prefix};
 
-sol! {
-    function kmsPublicKey() external view returns (bytes memory);
-}
-
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Failed to build KMS HTTP client: {0}")]
     ClientBuild(reqwest::Error),
-    #[error("Invalid KMS public key: {0}")]
-    InvalidKey(String),
     #[error("Invalid KMS response: {0}")]
     InvalidResponse(String),
     #[error("Invalid KMS response signature: {0}")]
     InvalidResponseSignature(String),
     #[error("KMS unavailable: {0}")]
     Unavailable(String),
-    #[error("RPC call failed: {0}")]
-    Rpc(#[from] RpcError),
     #[error("Signing error: {0}")]
     Signing(String),
 }
@@ -71,20 +62,17 @@ pub struct KmsClient {
 }
 
 impl KmsClient {
-    pub async fn new(
+    pub fn new(
         base_url: String,
-        rpc_url: &str,
-        contract_address: Address,
+        public_key: PublicKey,
         kms_signer_address: Address,
     ) -> Result<Self, Error> {
         let client = Client::builder().build().map_err(Error::ClientBuild)?;
-        let public_key =
-            Self::fetch_public_key_from_chain(rpc_url, contract_address, &client).await?;
 
         info!(
             kms_public_key = %hex::encode(public_key.to_sec1_bytes()),
             kms_signer_address = %kms_signer_address,
-            "KMS public key fetched from chain"
+            "KMS client initialized"
         );
 
         Ok(Self {
@@ -93,28 +81,6 @@ impl KmsClient {
             public_key,
             kms_signer_address,
         })
-    }
-
-    async fn fetch_public_key_from_chain(
-        rpc_url: &str,
-        contract_address: Address,
-        client: &Client,
-    ) -> Result<PublicKey, Error> {
-        let call = kmsPublicKeyCall {};
-        let contract = contract_address.to_string();
-
-        debug!("Fetching KMS public key from chain via eth_call to {contract}");
-
-        let result = rpc::eth_call(client, rpc_url, &contract, &call.abi_encode()).await?;
-
-        let result_bytes = hex::decode(strip_0x_prefix(&result))
-            .map_err(|e| Error::InvalidKey(format!("invalid hex in RPC result: {e}")))?;
-
-        let return_data = kmsPublicKeyCall::abi_decode_returns(&result_bytes)
-            .map_err(|e| Error::InvalidKey(format!("ABI decode failed: {e}")))?;
-
-        PublicKey::from_sec1_bytes(&return_data.0)
-            .map_err(|e| Error::InvalidKey(format!("invalid SEC1 public key: {e}")))
     }
 
     pub async fn get_encrypted_shared_secret(

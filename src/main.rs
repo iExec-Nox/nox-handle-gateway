@@ -1,4 +1,3 @@
-pub mod acl;
 pub mod application;
 pub mod config;
 pub mod crypto;
