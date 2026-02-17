@@ -27,8 +27,7 @@ pub enum RpcError {
 
 #[derive(Clone)]
 pub struct ChainClient {
-    provider: RootProvider,
-    contract_address: Address,
+    contract: NoxCompute::NoxComputeInstance<RootProvider>,
 }
 
 impl ChainClient {
@@ -40,16 +39,13 @@ impl ChainClient {
         let url: Url = rpc_url
             .parse()
             .map_err(|e| RpcError::Transport(format!("invalid RPC URL: {e}")))?;
-        let provider = RootProvider::new_http(url);
-        Ok(Self {
-            provider,
-            contract_address,
-        })
+        let contract = NoxCompute::new(contract_address, RootProvider::new_http(url));
+        Ok(Self { contract })
     }
 
     pub async fn kms_public_key(&self) -> Result<PublicKey, RpcError> {
-        let contract = NoxCompute::new(self.contract_address, &self.provider);
-        let result = contract
+        let result = self
+            .contract
             .kmsPublicKey()
             .call()
             .await
@@ -58,8 +54,8 @@ impl ChainClient {
     }
 
     pub async fn check_access(&self, handle: B256, viewer: Address) -> Result<(), RpcError> {
-        let contract = NoxCompute::new(self.contract_address, &self.provider);
-        let is_viewer = contract
+        let is_viewer = self
+            .contract
             .isViewer(handle, viewer)
             .call()
             .await
