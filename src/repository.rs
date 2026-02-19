@@ -82,9 +82,14 @@ impl DataRepository {
         &self,
         ids: &Vec<String>,
     ) -> Result<Vec<HandleEntry>, sqlx::error::Error> {
-        sqlx::query_as::<_, HandleEntry>("SELECT * FROM handles WHERE handle = ANY($1)")
-            .bind(ids)
-            .fetch_all(&self.pool)
-            .await
+        sqlx::query_as::<_, HandleEntry>(
+            "SELECT h.* FROM handles h
+            JOIN unnest($1::text[]) WITH ORDINALITY t(handle, ord)
+            ON h.handle = t.handle
+            ORDER BY t.ord",
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await
     }
 }
