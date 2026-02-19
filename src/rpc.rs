@@ -17,7 +17,7 @@ pub enum RpcError {
     #[error("Access denied: not a viewer")]
     AccessDenied,
     #[error("RPC call failed: {0}")]
-    CallFailure(String),
+    CallFailure(#[from] alloy_contract::Error),
     #[error("Invalid KMS public key: {0}")]
     InvalidKey(String),
     #[error("RPC provider error: {0}")]
@@ -45,7 +45,7 @@ impl NoxClient {
             .kmsPublicKey()
             .call()
             .await
-            .map_err(|e| RpcError::CallFailure(e.to_string()))?;
+            .map_err(RpcError::CallFailure)?;
         PublicKey::from_sec1_bytes(&result).map_err(|e| RpcError::InvalidKey(e.to_string()))
     }
 
@@ -55,7 +55,7 @@ impl NoxClient {
             .isViewer(handle, viewer)
             .call()
             .await
-            .map_err(|e| RpcError::CallFailure(e.to_string()))?;
+            .map_err(RpcError::CallFailure)?;
         if is_viewer {
             Ok(())
         } else {
