@@ -31,6 +31,7 @@ pub struct ChainConfig {
 #[derive(Clone, Debug, Deserialize)]
 pub struct KmsConfig {
     pub url: String,
+    pub signer_address: Address,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -49,8 +50,12 @@ impl Config {
                 "chain.nox_compute_contract",
                 "0x0000000000000000000000000000000000000000",
             )?
-            .set_default("chain.rpc_url", "")?
+            .set_default("chain.rpc_url", "http://localhost:8545")?
             .set_default("kms.url", "http://localhost:9000")?
+            .set_default(
+                "kms.signer_address",
+                "0x0000000000000000000000000000000000000000",
+            )?
             .set_default("signer.keystore_filename", "gateway_keystore.json")?
             .set_default("signer.keystore_password", "")?
             .add_source(

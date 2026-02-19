@@ -9,7 +9,6 @@ use crate::utils::serialize_bytes;
 
 const HANDLE_VERSION: u8 = 0x00; // V0
 pub const EIP_712_DOMAIN_VERSION: &str = "1";
-pub const KMS_PUBLIC_KEY_EIP712_DOMAIN_NAME: &str = "ProtocolPublicKey";
 pub const PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME: &str = "ProtocolDelegate";
 
 /// Value type for encrypted data
@@ -190,11 +189,6 @@ sol! {
         string encryptionPubKey;
         uint256 notBefore;
         uint256 expiresAt;
-    }
-
-    #[derive(Debug)]
-    struct PublicKeyProof {
-        string publicKey;
     }
 
     #[derive(Debug)]

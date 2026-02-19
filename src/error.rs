@@ -6,14 +6,14 @@ use axum::{
 use serde_json::json;
 use thiserror::Error;
 
-use crate::acl;
 use crate::crypto;
 use crate::kms;
+use crate::rpc;
 
 #[derive(Debug, Error)]
 pub enum AppError {
-    #[error("ACL error: {0}")]
-    AclError(#[from] acl::AclError),
+    #[error("RPC error: {0}")]
+    RpcError(#[from] rpc::RpcError),
     #[error("Bad request: {0}")]
     BadRequest(String),
     #[error("Cryptographic error: {0}")]
@@ -37,7 +37,7 @@ pub enum AppError {
 impl AppError {
     fn error_code(&self) -> &'static str {
         match self {
-            AppError::AclError(_) => "acl",
+            AppError::RpcError(_) => "rpc",
             AppError::BadRequest(_) => "bad_request",
             AppError::CryptoError(_) => "crypto",
             AppError::InvalidSolidityType(_) => "invalid_type",
@@ -52,8 +52,8 @@ impl AppError {
 
     fn status_code(&self) -> StatusCode {
         match self {
-            AppError::AclError(e) => match e {
-                acl::AclError::AccessDenied => StatusCode::FORBIDDEN,
+            AppError::RpcError(e) => match e {
+                rpc::RpcError::AccessDenied => StatusCode::FORBIDDEN,
                 _ => StatusCode::SERVICE_UNAVAILABLE,
             },
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,

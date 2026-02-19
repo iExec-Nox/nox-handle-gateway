@@ -175,7 +175,7 @@ pub async fn get_handle_crypto_material(
     }
     let handle_b256 = B256::from_slice(&handle_raw);
     state
-        .acl_client
+        .nox_client
         .check_access(handle_b256, payload.userAddress)
         .await?;
 

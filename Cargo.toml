@@ -5,7 +5,9 @@ edition = "2024"
 
 [dependencies]
 aes-gcm = "0.10.3"
+alloy-contract = "1.7.0"
 alloy-primitives = { version = "1.5.2", features = ["serde"] }
+alloy-provider = "1.7.0"
 alloy-signer = { version = "1.4.2", features = ["eip712"] }
 alloy-signer-local = { version = "1.5.2", features = ["keystore"] }
 alloy-sol-types = "1.5.2"
