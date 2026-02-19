@@ -12,16 +12,16 @@ use tokio::{net::TcpListener, signal};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{debug, info, warn};
 
-use crate::acl::AclClient;
 use crate::config::Config;
 use crate::crypto::load_or_create_signer;
 use crate::handlers;
 use crate::kms::KmsClient;
 use crate::repository::DataRepository;
+use crate::rpc::NoxClient;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub acl_client: AclClient,
+    pub nox_client: NoxClient,
     pub config: Config,
     pub kms_client: KmsClient,
     pub metrics_handle: PrometheusHandle,
@@ -53,6 +53,7 @@ impl Application {
             .route("/", get(Self::root))
             .route("/health", get(Self::health_check))
             .route("/metrics", get(Self::metrics))
+            .route("/v0/compute/operands", get(handlers::get_operand_handles))
             .route("/v0/compute/results", post(handlers::publish_results))
             .route("/v0/secrets", post(handlers::create_handle))
             .route(
@@ -69,16 +70,22 @@ impl Application {
         let signer = load_or_create_signer(&self.config.signer)?;
         info!("EIP-712 signer address: {}", signer.address());
 
-        let acl_client = AclClient::new(
+        let nox_client: NoxClient = NoxClient::new(
             &self.config.chain.rpc_url,
-            self.config.chain.tee_compute_manager_contract,
+            self.config.chain.nox_compute_contract,
+        )
+        .await?;
+        let kms_public_key = nox_client.kms_public_key().await?;
+        let kms_client = KmsClient::new(
+            self.config.kms.url.clone(),
+            kms_public_key,
+            self.config.kms.signer_address,
         )?;
-        let kms_client = KmsClient::new(self.config.kms.url.clone(), self.config.chain.id).await?;
         let repository = DataRepository::new(&self.config.s3).await;
 
         let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
         let state = AppState {
-            acl_client,
+            nox_client,
             config: self.config.clone(),
             kms_client,
             metrics_handle,

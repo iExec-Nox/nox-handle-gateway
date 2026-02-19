@@ -34,13 +34,14 @@ pub struct S3Config {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChainConfig {
     pub id: u32,
-    pub tee_compute_manager_contract: Address,
+    pub nox_compute_contract: Address,
     pub rpc_url: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct KmsConfig {
     pub url: String,
+    pub signer_address: Address,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -62,11 +63,15 @@ impl Config {
             .set_default("s3.timeout", 30)?
             .set_default("chain.id", 421614)?
             .set_default(
-                "chain.tee_compute_manager_contract",
+                "chain.nox_compute_contract",
                 "0x0000000000000000000000000000000000000000",
             )?
-            .set_default("chain.rpc_url", "https://sepolia-rollup.arbitrum.io/rpc")?
+            .set_default("chain.rpc_url", "http://localhost:8545")?
             .set_default("kms.url", "http://localhost:9000")?
+            .set_default(
+                "kms.signer_address",
+                "0x0000000000000000000000000000000000000000",
+            )?
             .set_default("signer.keystore_filename", "gateway_keystore.json")?
             .set_default("signer.keystore_password", "")?
             .add_source(

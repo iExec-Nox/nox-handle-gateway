@@ -1,4 +1,3 @@
-pub mod acl;
 pub mod application;
 pub mod config;
 pub mod crypto;
@@ -6,6 +5,7 @@ pub mod error;
 pub mod handlers;
 pub mod kms;
 pub mod repository;
+pub mod rpc;
 pub mod s3;
 pub mod types;
 pub mod utils;
@@ -14,8 +14,8 @@ pub mod validation;
 use tracing::{debug, error};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use application::Application;
-use config::Config;
+use crate::application::Application;
+use crate::config::Config;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

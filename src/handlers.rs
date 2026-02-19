@@ -1,5 +1,6 @@
 use alloy_primitives::{Address, B256, U256, hex};
 use alloy_signer::{Signature, SignerSync};
+use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolStruct, eip712_domain};
 use axum::{
     Json,
@@ -8,20 +9,22 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{NaiveDateTime, TimeZone, Utc};
+use futures::future::join_all;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::application::AppState;
 use crate::crypto::ecies_encrypt;
 use crate::error::AppError;
+use crate::kms::KmsClient;
 use crate::repository::HandleEntry;
 use crate::types::{DataAccessAuthorization, Handle, HandleProof, SolidityType};
 use crate::utils::{serialize_bytes, strip_0x_prefix};
 use crate::validation::decode_and_validate_value;
 
 // EIP-712 domain name for HandleProof generation
-const TEE_COMPUTE_MANAGER_EIP712_DOMAIN_NAME: &str = "TEEComputeManager";
+const NOX_COMPUTE_EIP712_DOMAIN_NAME: &str = "NoxCompute";
 // EIP-712 domain name for DataAccessAuthorization validation
 const HANDLE_GATEWAY_EIP712_DOMAIN_NAME: &str = "Handle Gateway";
 
@@ -51,6 +54,7 @@ struct GatewayDelegateAuthorization {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GatewayDelegateResponse {
+    handle: String,
     ciphertext: String,
     encrypted_shared_secret: String,
     iv: String,
@@ -75,14 +79,15 @@ pub async fn create_handle(
         nonce: serialize_bytes(&ecies_ciphertext.nonce),
         created_at: NaiveDateTime::default(),
     };
+
     let new_handle = state.repository.create_handle(&entry).await?;
 
     // HandleProof
     let domain = eip712_domain! {
-        name: TEE_COMPUTE_MANAGER_EIP712_DOMAIN_NAME,
+        name: NOX_COMPUTE_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(state.config.chain.id),
-        verifying_contract: state.config.chain.tee_compute_manager_contract,
+        verifying_contract: state.config.chain.nox_compute_contract,
     };
 
     let created_at = U256::from(new_handle.created_at.and_utc().timestamp());
@@ -130,7 +135,7 @@ pub async fn get_handle_crypto_material(
         name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(state.config.chain.id),
-        verifying_contract: state.config.chain.tee_compute_manager_contract,
+        verifying_contract: state.config.chain.nox_compute_contract,
     };
     let payload = authorization.payload;
     let hash = payload.eip712_signing_hash(&domain);
@@ -170,7 +175,7 @@ pub async fn get_handle_crypto_material(
     }
     let handle_b256 = B256::from_slice(&handle_raw);
     state
-        .acl_client
+        .nox_client
         .check_access(handle_b256, payload.userAddress)
         .await?;
 
@@ -190,6 +195,7 @@ pub async fn get_handle_crypto_material(
         )
         .await?;
     Ok(Json(GatewayDelegateResponse {
+        handle,
         ciphertext: entry.ciphertext,
         encrypted_shared_secret,
         iv: entry.nonce,
@@ -206,7 +212,109 @@ fn format_timestamp(ts: U256) -> String {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TEEComputeResult {
+pub struct NoxComputeRequest {
+    caller: Address,
+    rsa_public_key: String,
+    operands: Vec<String>,
+    results: Vec<String>,
+}
+
+pub async fn get_operand_handles(
+    State(state): State<AppState>,
+    Json(compute_request): Json<NoxComputeRequest>,
+) -> Result<Json<Vec<GatewayDelegateResponse>>, AppError> {
+    // TODO check caller has permissions
+    debug!("preparing handles for caller {}", compute_request.caller);
+
+    let mut conflicting_result_handles = false;
+    let result_handles: Vec<HandleEntry> = state
+        .repository
+        .read_handles(&compute_request.results)
+        .await?;
+    debug!("result handles count {}", result_handles.len());
+    if !result_handles.is_empty() {
+        let unexpected_handles: Vec<String> = result_handles
+            .iter()
+            .map(|entry| entry.handle.clone())
+            .collect();
+        error!("unexpected result handles found in handle database {unexpected_handles:?}");
+        conflicting_result_handles = true;
+    }
+
+    let mut missing_operand_handles = false;
+    let operand_handles: Vec<HandleEntry> = state
+        .repository
+        .read_handles(&compute_request.operands)
+        .await?;
+    debug!("operand handles count {}", operand_handles.len());
+    if operand_handles.len() != compute_request.operands.len() {
+        let missing_handles: Vec<String> = operand_handles
+            .iter()
+            .map(|entry| entry.handle.clone())
+            .filter(|handle| !compute_request.operands.contains(handle))
+            .collect();
+        error!("expected operand handles not found in handle database {missing_handles:?}");
+        missing_operand_handles = true;
+    }
+    if conflicting_result_handles || missing_operand_handles {
+        return Err(AppError::BadRequest(format!(
+            "impossible to perform computation [conflicting_result_handles:{conflicting_result_handles}, missing_operand_handles:{missing_operand_handles}]"
+        )));
+    }
+
+    let operands_crypto_material: Vec<GatewayDelegateResponse> =
+        join_all(operand_handles.iter().map(|entry| {
+            get_crypto_material_for_entry(
+                state.kms_client.clone(),
+                entry,
+                &compute_request.rsa_public_key,
+                &state.signer,
+                state.config.chain.id,
+            )
+        }))
+        .await
+        .into_iter()
+        .filter_map(Result::ok)
+        .collect();
+    if operands_crypto_material.len() != compute_request.operands.len() {
+        let missing_handles: Vec<String> = operands_crypto_material
+            .iter()
+            .map(|crypto_material| crypto_material.handle.clone())
+            .filter(|handle| !compute_request.operands.contains(handle))
+            .collect();
+        error!("expected operand handles not prepared {missing_handles:?}");
+        return Err(AppError::OperandsNotPrepared);
+    }
+    Ok(Json(operands_crypto_material))
+}
+
+async fn get_crypto_material_for_entry(
+    kms_client: KmsClient,
+    entry: &HandleEntry,
+    rsa_public_key: &str,
+    signer: &PrivateKeySigner,
+    chain_id: u32,
+) -> Result<GatewayDelegateResponse, AppError> {
+    let encrypted_shared_secret = kms_client
+        .get_encrypted_shared_secret(&entry.public_key, rsa_public_key, signer, chain_id)
+        .await?;
+    info!(
+        ciphertext = entry.ciphertext,
+        encrypted_shared_secret = encrypted_shared_secret,
+        iv = entry.nonce,
+        "GatewayDelegateResponse"
+    );
+    Ok(GatewayDelegateResponse {
+        handle: entry.handle.clone(),
+        ciphertext: entry.ciphertext.clone(),
+        encrypted_shared_secret,
+        iv: entry.nonce.clone(),
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoxComputeResult {
     chain_id: u32,
     block_number: u64,
     transaction_hash: String,
@@ -216,7 +324,7 @@ pub struct TEEComputeResult {
 // TODO missing checks on chain_id, block_number and transaction_hash
 pub async fn publish_results(
     State(state): State<AppState>,
-    Json(compute_result): Json<TEEComputeResult>,
+    Json(compute_result): Json<NoxComputeResult>,
 ) -> Result<(), AppError> {
     info!(
         chain_id = compute_result.chain_id,

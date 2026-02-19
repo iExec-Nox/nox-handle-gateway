@@ -67,4 +67,23 @@ impl DataRepository {
 
         Ok(entry)
     }
+
+    pub async fn read_handles(&self, ids: &[String]) -> Result<Vec<HandleEntry>, S3Error> {
+        let mut results = Vec::with_capacity(ids.len());
+        for id in ids {
+            let key = strip_0x_prefix(id);
+            match self.s3.get(key).await {
+                Ok(data) => {
+                    let entry: HandleEntry =
+                        serde_json::from_slice(&data).map_err(|e| S3Error::S3Operation {
+                            message: format!("Failed to deserialize entry: {e}"),
+                        })?;
+                    results.push(entry);
+                }
+                Err(S3Error::NotFound { .. }) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(results)
+    }
 }

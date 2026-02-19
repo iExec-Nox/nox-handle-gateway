@@ -6,15 +6,15 @@ use axum::{
 use serde_json::json;
 use thiserror::Error;
 
-use crate::acl;
 use crate::crypto;
 use crate::kms;
+use crate::rpc;
 use crate::s3;
 
 #[derive(Debug, Error)]
 pub enum AppError {
-    #[error("ACL error: {0}")]
-    AclError(#[from] acl::AclError),
+    #[error("RPC error: {0}")]
+    RpcError(#[from] rpc::RpcError),
     #[error("Bad request: {0}")]
     BadRequest(String),
     #[error("Cryptographic error: {0}")]
@@ -25,10 +25,12 @@ pub enum AppError {
     InvalidSolidityValue(String),
     #[error("KMS error: {0}")]
     KmsError(#[from] kms::Error),
-    #[error("Storage error: {0}")]
-    StorageError(#[from] s3::S3Error),
+    #[error("Operands not prepared for computation")]
+    OperandsNotPrepared,
     #[error("Signing error: {0}")]
     SigningError(String),
+    #[error("Storage error: {0}")]
+    StorageError(#[from] s3::S3Error),
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 }
@@ -36,22 +38,23 @@ pub enum AppError {
 impl AppError {
     fn error_code(&self) -> &'static str {
         match self {
-            AppError::AclError(_) => "acl",
+            AppError::RpcError(_) => "rpc",
             AppError::BadRequest(_) => "bad_request",
             AppError::CryptoError(_) => "crypto",
             AppError::InvalidSolidityType(_) => "invalid_type",
             AppError::InvalidSolidityValue(_) => "invalid_value",
             AppError::KmsError(_) => "kms",
-            AppError::StorageError(_) => "storage",
+            AppError::OperandsNotPrepared => "operands",
             AppError::SigningError(_) => "signing",
+            AppError::StorageError(_) => "storage",
             AppError::Unauthorized(_) => "unauthorized",
         }
     }
 
     fn status_code(&self) -> StatusCode {
         match self {
-            AppError::AclError(e) => match e {
-                acl::AclError::AccessDenied => StatusCode::FORBIDDEN,
+            AppError::RpcError(e) => match e {
+                rpc::RpcError::AccessDenied => StatusCode::FORBIDDEN,
                 _ => StatusCode::SERVICE_UNAVAILABLE,
             },
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
@@ -63,12 +66,13 @@ impl AppError {
                 kms::Error::InvalidResponse(_) => StatusCode::BAD_REQUEST,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
+            AppError::OperandsNotPrepared => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::StorageError(e) => match e {
                 s3::S3Error::NotFound { .. } => StatusCode::NOT_FOUND,
                 s3::S3Error::AlreadyExists { .. } => StatusCode::CONFLICT,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
-            AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
         }
     }
