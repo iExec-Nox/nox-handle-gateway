@@ -13,6 +13,8 @@ permissions:
 jobs:
   release-please:
     # Prevent execution on forks
-    if: github.repository_owner == 'iExecBlockchainComputing'
+    if: github.repository_owner == 'iExec-Nox'
     uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/release-please.yml@release-please-v2.0.0
-    secrets: inherit
+    secrets:
+      RELEASE_PLEASE_APPLICATION_ID: ${{ secrets.RELEASE_PLEASE_APPLICATION_ID }}
+      RELEASE_PLEASE_PRIVATE_KEY: ${{ secrets.RELEASE_PLEASE_PRIVATE_KEY }}

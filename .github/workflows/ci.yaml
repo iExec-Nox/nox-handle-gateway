@@ -19,7 +19,7 @@ jobs:
     needs: build-and-test
     runs-on: ubuntu-latest
     if: |
-      github.repository_owner == 'iExecBlockchainComputing' &&
+      github.repository_owner == 'iExec-Nox' &&
       (github.ref_name == 'main' ||
        startsWith(github.head_ref, 'feature/') ||
        startsWith(github.head_ref, 'bugfix/') ||
@@ -63,5 +63,5 @@ jobs:
       hadolint: true
       platform: linux/amd64
     secrets:
-      username: ${{ secrets.NEXUS_USERNAME }}
-      password: ${{ secrets.NEXUS_PASSWORD }}
+      username: ${{ secrets.DOCKERREGIS_USERNAME }}
+      password: ${{ secrets.DOCKERREGIS_PASSWORD }}
