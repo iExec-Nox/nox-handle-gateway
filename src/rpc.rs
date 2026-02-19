@@ -6,7 +6,7 @@ use thiserror::Error;
 
 sol! {
     #[sol(rpc)]
-    contract INoxCompute {
+    interface INoxCompute {
         function isViewer(bytes32 handle, address viewer) external view returns (bool);
         function kmsPublicKey() external view returns (bytes memory);
     }
