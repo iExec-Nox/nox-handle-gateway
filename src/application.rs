@@ -17,11 +17,11 @@ use crate::crypto::load_or_create_signer;
 use crate::handlers;
 use crate::kms::KmsClient;
 use crate::repository::DataRepository;
-use crate::rpc::ChainClient;
+use crate::rpc::NoxClient;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub chain_client: ChainClient,
+    pub nox_client: NoxClient,
     pub config: Config,
     pub kms_client: KmsClient,
     pub metrics_handle: PrometheusHandle,
@@ -70,11 +70,12 @@ impl Application {
         let signer = load_or_create_signer(&self.config.signer)?;
         info!("EIP-712 signer address: {}", signer.address());
 
-        let chain_client = ChainClient::new(
+        let nox_client: NoxClient = NoxClient::new(
             &self.config.chain.rpc_url,
             self.config.chain.nox_compute_contract,
-        )?;
-        let kms_public_key = chain_client.kms_public_key().await?;
+        )
+        .await?;
+        let kms_public_key = nox_client.kms_public_key().await?;
         let kms_client = KmsClient::new(
             self.config.kms.url.clone(),
             kms_public_key,
@@ -84,7 +85,7 @@ impl Application {
 
         let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
         let state = AppState {
-            chain_client,
+            nox_client,
             config: self.config.clone(),
             kms_client,
             metrics_handle,

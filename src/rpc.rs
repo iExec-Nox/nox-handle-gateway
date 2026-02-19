@@ -3,11 +3,10 @@ use alloy_provider::RootProvider;
 use alloy_sol_types::sol;
 use k256::PublicKey;
 use thiserror::Error;
-use url::Url;
 
 sol! {
     #[sol(rpc)]
-    contract NoxCompute {
+    contract INoxCompute {
         function isViewer(bytes32 handle, address viewer) external view returns (bool);
         function kmsPublicKey() external view returns (bytes memory);
     }
@@ -15,31 +14,28 @@ sol! {
 
 #[derive(Debug, Error)]
 pub enum RpcError {
-    #[error("RPC transport: {0}")]
-    Transport(String),
-    #[error("RPC call failed: {0}")]
-    Call(String),
-    #[error("Invalid KMS public key: {0}")]
-    InvalidKey(String),
     #[error("Access denied: not a viewer")]
     AccessDenied,
+    #[error("RPC call failed: {0}")]
+    CallFailure(String),
+    #[error("Invalid KMS public key: {0}")]
+    InvalidKey(String),
+    #[error("RPC provider error: {0}")]
+    ProviderError(String),
 }
 
 #[derive(Clone)]
-pub struct ChainClient {
-    contract: NoxCompute::NoxComputeInstance<RootProvider>,
+pub struct NoxClient {
+    contract: INoxCompute::INoxComputeInstance<RootProvider>,
 }
 
-impl ChainClient {
-    pub fn new(rpc_url: &str, contract_address: Address) -> Result<Self, RpcError> {
-        let rpc_url = rpc_url.trim();
-        if rpc_url.is_empty() {
-            return Err(RpcError::Transport("RPC URL is required".to_string()));
-        }
-        let url: Url = rpc_url
-            .parse()
-            .map_err(|e| RpcError::Transport(format!("invalid RPC URL: {e}")))?;
-        let contract = NoxCompute::new(contract_address, RootProvider::new_http(url));
+impl NoxClient {
+    pub async fn new(rpc_url: &str, contract_address: Address) -> Result<Self, RpcError> {
+        let trimmed_rpc_url = rpc_url.trim_end_matches('/');
+        let provider = RootProvider::connect(trimmed_rpc_url)
+            .await
+            .map_err(|e| RpcError::ProviderError(e.to_string()))?;
+        let contract = INoxCompute::new(contract_address, provider);
         Ok(Self { contract })
     }
 
@@ -49,7 +45,7 @@ impl ChainClient {
             .kmsPublicKey()
             .call()
             .await
-            .map_err(|e| RpcError::Call(e.to_string()))?;
+            .map_err(|e| RpcError::CallFailure(e.to_string()))?;
         PublicKey::from_sec1_bytes(&result).map_err(|e| RpcError::InvalidKey(e.to_string()))
     }
 
@@ -59,7 +55,7 @@ impl ChainClient {
             .isViewer(handle, viewer)
             .call()
             .await
-            .map_err(|e| RpcError::Call(e.to_string()))?;
+            .map_err(|e| RpcError::CallFailure(e.to_string()))?;
         if is_viewer {
             Ok(())
         } else {
