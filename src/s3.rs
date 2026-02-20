@@ -111,13 +111,14 @@ impl S3Client {
             .send()
             .await
             .map_err(|e| {
-                let error_str = format!("{:?}", e);
-                if error_str.contains("NoSuchKey") || error_str.contains("NotFound") {
+                if e.as_service_error().map(|se| se.is_no_such_key()) == Some(true) {
                     S3Error::NotFound {
                         key: key.to_string(),
                     }
                 } else {
-                    S3Error::S3Operation { message: error_str }
+                    S3Error::S3Operation {
+                        message: format!("{:?}", e),
+                    }
                 }
             })?;
 
@@ -144,11 +145,12 @@ impl S3Client {
         {
             Ok(_) => Ok(true),
             Err(e) => {
-                let error_str = format!("{:?}", e);
-                if error_str.contains("NotFound") || error_str.contains("NoSuchKey") {
+                if e.as_service_error().map(|se| se.is_not_found()) == Some(true) {
                     Ok(false)
                 } else {
-                    Err(S3Error::S3Operation { message: error_str })
+                    Err(S3Error::S3Operation {
+                        message: format!("{:?}", e),
+                    })
                 }
             }
         }
