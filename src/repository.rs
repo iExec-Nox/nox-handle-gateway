@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::S3Config;
 use crate::s3::{S3Client, S3Error};
-use crate::utils::strip_0x_prefix;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HandleEntry {
@@ -38,9 +37,9 @@ impl DataRepository {
             ("created-at".to_string(), entry.created_at.to_string()),
         ];
 
-        let key = strip_0x_prefix(&entry.handle);
-
-        self.s3.put_if_not_exist(key, &data, metadata).await?;
+        self.s3
+            .put_if_not_exist(&entry.handle, &data, metadata)
+            .await?;
 
         Ok(entry)
     }
@@ -57,8 +56,7 @@ impl DataRepository {
     }
 
     pub async fn fetch_handle(&self, handle: &str) -> Result<HandleEntry, S3Error> {
-        let key = strip_0x_prefix(handle);
-        let data = self.s3.get(key).await?;
+        let data = self.s3.get(handle).await?;
 
         let entry: HandleEntry =
             serde_json::from_slice(&data).map_err(|e| S3Error::S3Operation {
@@ -71,8 +69,7 @@ impl DataRepository {
     pub async fn read_handles(&self, ids: &[String]) -> Result<Vec<HandleEntry>, S3Error> {
         let mut results = Vec::with_capacity(ids.len());
         for id in ids {
-            let key = strip_0x_prefix(id);
-            match self.s3.get(key).await {
+            match self.s3.get(id).await {
                 Ok(data) => {
                     let entry: HandleEntry =
                         serde_json::from_slice(&data).map_err(|e| S3Error::S3Operation {
