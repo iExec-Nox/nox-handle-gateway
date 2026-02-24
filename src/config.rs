@@ -57,9 +57,6 @@ impl Config {
             .set_default("server.port", 3000)?
             .set_default("s3.endpoint_url", "http://localhost:9900")?
             .set_default("s3.bucket", "handles")?
-            .set_default("s3.access_key", "minioAccessKey")?
-            .set_default("s3.secret_key", "minioSecretKey")?
-            .set_default("s3.region", "us-east-1")?
             .set_default("s3.timeout", 30)?
             .set_default("chain.id", 421614)?
             .set_default(

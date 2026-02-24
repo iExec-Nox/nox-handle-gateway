@@ -1,3 +1,4 @@
+use std::error::Error as stdError;
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
 
@@ -22,10 +23,24 @@ pub enum S3Error {
     S3Operation { message: String },
 }
 
-impl<E: Debug, R: Debug> From<SdkError<E, R>> for S3Error {
+fn extract_error_message<E: stdError + 'static, R: Debug>(err: &SdkError<E, R>) -> String {
+    let mut current: &dyn stdError = err;
+    let mut deepest = String::new();
+    while let Some(source) = current.source() {
+        deepest = source.to_string();
+        current = source;
+    }
+    if deepest.is_empty() {
+        format!("{err:?}")
+    } else {
+        deepest
+    }
+}
+
+impl<E: stdError + 'static, R: Debug> From<SdkError<E, R>> for S3Error {
     fn from(err: SdkError<E, R>) -> Self {
         S3Error::S3Operation {
-            message: format!("{:?}", err),
+            message: extract_error_message(&err),
         }
     }
 }
@@ -117,7 +132,7 @@ impl S3Client {
                     }
                 } else {
                     S3Error::S3Operation {
-                        message: format!("{:?}", e),
+                        message: extract_error_message(&e),
                     }
                 }
             })?;
@@ -127,7 +142,7 @@ impl S3Client {
             .collect()
             .await
             .map_err(|e| S3Error::S3Operation {
-                message: format!("Failed to read response body: {:?}", e),
+                message: format!("Failed to read response body: {}", e),
             })?
             .to_vec();
 
@@ -149,7 +164,7 @@ impl S3Client {
                     Ok(false)
                 } else {
                     Err(S3Error::S3Operation {
-                        message: format!("{:?}", e),
+                        message: extract_error_message(&e),
                     })
                 }
             }
