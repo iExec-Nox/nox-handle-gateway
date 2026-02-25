@@ -8,8 +8,8 @@ use thiserror::Error;
 
 use crate::crypto;
 use crate::kms;
+use crate::repository;
 use crate::rpc;
-use crate::s3;
 
 #[derive(Debug, Error)]
 pub enum AppError {
@@ -30,7 +30,7 @@ pub enum AppError {
     #[error("Signing error: {0}")]
     SigningError(String),
     #[error("Storage error: {0}")]
-    StorageError(#[from] s3::S3Error),
+    StorageError(#[from] repository::S3Error),
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 }
@@ -69,8 +69,8 @@ impl AppError {
             AppError::OperandsNotPrepared => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::StorageError(e) => match e {
-                s3::S3Error::NotFound { .. } => StatusCode::NOT_FOUND,
-                s3::S3Error::AlreadyExists { .. } => StatusCode::CONFLICT,
+                repository::S3Error::NotFound { .. } => StatusCode::NOT_FOUND,
+                repository::S3Error::AlreadyExists { .. } => StatusCode::CONFLICT,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,

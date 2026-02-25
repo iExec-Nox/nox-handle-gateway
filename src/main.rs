@@ -6,7 +6,6 @@ pub mod handlers;
 pub mod kms;
 pub mod repository;
 pub mod rpc;
-pub mod s3;
 pub mod types;
 pub mod utils;
 pub mod validation;
