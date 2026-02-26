@@ -178,38 +178,6 @@ impl DataRepository {
         Ok(())
     }
 
-    async fn get(&self, key: &str) -> Result<Vec<u8>, S3Error> {
-        let response = self
-            .client
-            .get_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.as_service_error().map(|se| se.is_no_such_key()) == Some(true) {
-                    S3Error::NotFound {
-                        key: key.to_string(),
-                    }
-                } else {
-                    S3Error::S3Operation {
-                        message: extract_error_message(&e),
-                    }
-                }
-            })?;
-
-        let bytes = response
-            .body
-            .collect()
-            .await
-            .map_err(|e| S3Error::S3Operation {
-                message: format!("Failed to read response body: {}", e),
-            })?
-            .to_vec();
-
-        Ok(bytes)
-    }
-
     async fn exists(&self, key: &str) -> Result<bool, S3Error> {
         match self
             .client
@@ -266,27 +234,44 @@ impl DataRepository {
     }
 
     pub async fn fetch_handle(&self, handle: &str) -> Result<HandleEntry, S3Error> {
-        let data = self.get(handle).await?;
-
-        let entry: HandleEntry =
-            serde_json::from_slice(&data).map_err(|e| S3Error::S3Operation {
-                message: format!("Failed to deserialize entry: {e}"),
+        let response = self
+            .client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(handle)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.as_service_error().map(|se| se.is_no_such_key()) == Some(true) {
+                    S3Error::NotFound {
+                        key: handle.to_string(),
+                    }
+                } else {
+                    S3Error::S3Operation {
+                        message: extract_error_message(&e),
+                    }
+                }
             })?;
 
-        Ok(entry)
+        let bytes = response
+            .body
+            .collect()
+            .await
+            .map_err(|e| S3Error::S3Operation {
+                message: format!("Failed to read response body: {e}"),
+            })?
+            .to_vec();
+
+        serde_json::from_slice(&bytes).map_err(|e| S3Error::S3Operation {
+            message: format!("Failed to deserialize entry: {e}"),
+        })
     }
 
     pub async fn read_handles(&self, ids: &[String]) -> Result<Vec<HandleEntry>, S3Error> {
         let mut results = Vec::with_capacity(ids.len());
         for id in ids {
-            match self.get(id).await {
-                Ok(data) => {
-                    let entry: HandleEntry =
-                        serde_json::from_slice(&data).map_err(|e| S3Error::S3Operation {
-                            message: format!("Failed to deserialize entry: {e}"),
-                        })?;
-                    results.push(entry);
-                }
+            match self.fetch_handle(id).await {
+                Ok(entry) => results.push(entry),
                 Err(S3Error::NotFound { .. }) => {}
                 Err(e) => return Err(e),
             }
