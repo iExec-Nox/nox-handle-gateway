@@ -21,6 +21,11 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
+/// S3/MinIO connection configuration.
+///
+/// `access_key`, `secret_key`, and `region` have no defaults — the process
+/// exits at startup if they are not provided via environment variables or a
+/// config file.
 #[derive(Debug, Clone, Deserialize)]
 pub struct S3Config {
     pub endpoint_url: String,
