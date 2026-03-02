@@ -93,7 +93,7 @@ pub async fn create_handle(
     let created_at = U256::from(
         new_handle
             .created_at
-            .expect("created_at set by create_handle")
+            .ok_or_else(|| AppError::SigningError("created_at not set by repository".to_string()))?
             .and_utc()
             .timestamp(),
     );

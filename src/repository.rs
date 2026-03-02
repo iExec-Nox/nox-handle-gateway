@@ -4,7 +4,6 @@
 //! `If-None-Match: *`, and idempotent batch publishing with pre-flight conflict
 //! detection.
 
-use std::error::Error as stdError;
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
 
@@ -13,13 +12,13 @@ use aws_sdk_s3::{
     config::Credentials,
     error::SdkError,
     primitives::DateTime,
-    types::{ObjectLockEnabled, ObjectLockMode},
+    types::{ChecksumAlgorithm, ObjectLockEnabled, ObjectLockMode},
 };
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+use tracing::{info, warn};
 
 use crate::config::S3Config;
 
@@ -38,31 +37,13 @@ pub enum S3Error {
     S3Operation { message: String },
 }
 
-/// Extracts the deepest available error message from an SDK error.
-///
-/// Walks the `source()` chain because HEAD requests return no response body,
-/// so the SDK cannot parse an XML error — the top-level error message is then
-/// uninformative and the useful detail lives further down the chain. Falls back
-/// to `{:?}` formatting when the chain is empty.
-fn extract_error_message<E: stdError + 'static, R: Debug>(err: &SdkError<E, R>) -> String {
-    let mut current: &dyn stdError = err;
-    let mut deepest = String::new();
-    while let Some(source) = current.source() {
-        deepest = source.to_string();
-        current = source;
-    }
-    if deepest.is_empty() {
-        format!("{err:?}")
-    } else {
-        deepest
-    }
-}
-
-impl<E: stdError + 'static, R: Debug> From<SdkError<E, R>> for S3Error {
+impl<E: std::error::Error + 'static, R: Debug> From<SdkError<E, R>> for S3Error {
     fn from(err: SdkError<E, R>) -> Self {
-        S3Error::S3Operation {
-            message: extract_error_message(&err),
-        }
+        let message = match &err {
+            SdkError::ServiceError(se) => se.err().to_string(),
+            _ => err.to_string(),
+        };
+        S3Error::S3Operation { message }
     }
 }
 
@@ -170,63 +151,26 @@ impl DataRepository {
         Ok(())
     }
 
-    /// Writes `data` to `key`, failing if the key already exists.
+    /// Stores a single handle entry in S3 under an If-None-Match guard.
     ///
-    /// Uses `If-None-Match: *` to make existence check and write a single
+    /// Sets `created_at` to the current server time before writing. The
+    /// timestamp is excluded from the JSON body but written to the S3 object
+    /// metadata under `"created-at"` for observability.
+    ///
+    /// Uses `If-None-Match: *` so the existence check and write are a single
     /// atomic operation. A 412 response (key already exists) is mapped to
     /// [`S3Error::AlreadyExists`]; all other errors become [`S3Error::S3Operation`].
     ///
     /// Objects are written with S3 Object Lock Compliance mode and a 100-year
     /// retention period, making them immutable for the lifetime of the system.
-    async fn put_if_not_exist(
-        &self,
-        key: &str,
-        data: &[u8],
-        metadata: Vec<(String, String)>,
-    ) -> Result<(), S3Error> {
-        let retain_until = SystemTime::now() + Duration::from_secs(RETENTION_DURATION_SECS);
-        let content_md5 = STANDARD.encode(md5::compute(data).0);
-
-        let mut request = self
-            .client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .body(data.to_vec().into())
-            .content_type("application/octet-stream")
-            .if_none_match("*")
-            .object_lock_mode(ObjectLockMode::Compliance)
-            .object_lock_retain_until_date(DateTime::from(retain_until))
-            .content_md5(content_md5);
-
-        for (k, v) in metadata {
-            request = request.metadata(k, v);
-        }
-
-        let mut hasher = Sha256::new();
-        hasher.update(data);
-        let hash = format!("{:x}", hasher.finalize());
-        request = request.metadata(METADATA_CONTENT_SHA256, hash);
-
-        request.send().await.map_err(|err| {
-            if let aws_sdk_s3::error::SdkError::ServiceError(ref service_err) = err
-                && service_err.raw().status().as_u16() == 412
-            {
-                return S3Error::AlreadyExists {
-                    key: key.to_string(),
-                };
-            }
-            S3Error::from(err)
-        })?;
-
-        Ok(())
-    }
-
-    /// Stores a single handle entry in S3.
     ///
-    /// Sets `created_at` to the current server time before writing. The
-    /// timestamp is excluded from the JSON body but written to the S3 object
-    /// metadata under `"created-at"` for observability.
+    /// # Retry note
+    ///
+    /// If the network drops after S3 has durably written the object but before
+    /// the response arrives, an SDK retry of this request will receive a 412
+    /// and return [`S3Error::AlreadyExists`] even though the write was ours.
+    /// Callers must treat [`S3Error::AlreadyExists`] on a fresh write as a
+    /// possible false positive and verify the stored object if needed.
     pub async fn create_handle(&self, entry: &HandleEntry) -> Result<HandleEntry, S3Error> {
         let mut entry = entry.clone();
         entry.created_at = Some(Utc::now().naive_utc());
@@ -235,16 +179,45 @@ impl DataRepository {
             message: format!("Failed to serialize entry: {e}"),
         })?;
 
-        let metadata = vec![
-            ("handle".to_string(), entry.handle.clone()),
-            (
-                "created-at".to_string(),
-                entry.created_at.unwrap().to_string(),
-            ),
-        ];
+        let mut hasher = Sha256::new();
+        hasher.update(&data);
+        let sha256 = format!("{:x}", hasher.finalize());
 
-        self.put_if_not_exist(&entry.handle, &data, metadata)
-            .await?;
+        let request = self
+            .client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(&entry.handle)
+            .body(data.into())
+            .content_type("application/octet-stream")
+            .if_none_match("*")
+            .object_lock_mode(ObjectLockMode::Compliance)
+            .object_lock_retain_until_date(DateTime::from(
+                SystemTime::now() + Duration::from_secs(RETENTION_DURATION_SECS),
+            ))
+            .checksum_algorithm(ChecksumAlgorithm::Crc64Nvme)
+            .metadata("handle", &entry.handle)
+            .metadata("created-at", entry.created_at.unwrap().to_string())
+            .metadata(METADATA_CONTENT_SHA256, sha256);
+
+        let output = request.send().await.map_err(|err| {
+            if let aws_sdk_s3::error::SdkError::ServiceError(ref service_err) = err
+                && service_err.raw().status().as_u16() == 412
+            {
+                return S3Error::AlreadyExists {
+                    key: entry.handle.clone(),
+                };
+            }
+            S3Error::from(err)
+        })?;
+
+        info!(
+            handle = %entry.handle,
+            e_tag = ?output.e_tag(),
+            version_id = ?output.version_id(),
+            checksum_crc64_nvme = ?output.checksum_crc64_nvme(),
+            "handle stored in S3",
+        );
 
         Ok(entry)
     }
@@ -267,9 +240,7 @@ impl DataRepository {
                 if e.as_service_error().map(|se| se.is_not_found()) == Some(true) {
                     Ok(true)
                 } else {
-                    Err(S3Error::S3Operation {
-                        message: extract_error_message(&e),
-                    })
+                    Err(e.into())
                 }
             }
         }
@@ -304,12 +275,12 @@ impl DataRepository {
         }
 
         if conflicts.len() == entries.len() {
-            tracing::info!("all handles already exist, idempotent retry — returning success");
+            info!("all handles already exist, idempotent retry — returning success");
             return Ok(vec![]);
         }
 
         if !conflicts.is_empty() {
-            tracing::warn!(conflicts = ?conflicts, "partial batch conflict — refusing to write");
+            warn!(conflicts = ?conflicts, "partial batch conflict — refusing to write");
             return Err(S3Error::BatchConflict { conflicts });
         }
 
@@ -337,9 +308,7 @@ impl DataRepository {
                         key: handle.to_string(),
                     }
                 } else {
-                    S3Error::S3Operation {
-                        message: extract_error_message(&e),
-                    }
+                    e.into()
                 }
             })?;
 
