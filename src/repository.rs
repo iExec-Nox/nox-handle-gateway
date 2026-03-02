@@ -171,9 +171,13 @@ impl DataRepository {
     /// and return [`S3Error::AlreadyExists`] even though the write was ours.
     /// Callers must treat [`S3Error::AlreadyExists`] on a fresh write as a
     /// possible false positive and verify the stored object if needed.
-    pub async fn create_handle(&self, entry: &HandleEntry) -> Result<HandleEntry, S3Error> {
+    pub async fn create_handle(
+        &self,
+        entry: &HandleEntry,
+    ) -> Result<(HandleEntry, NaiveDateTime), S3Error> {
         let mut entry = entry.clone();
-        entry.created_at = Some(Utc::now().naive_utc());
+        let created_at = Utc::now().naive_utc();
+        entry.created_at = Some(created_at);
 
         let data = serde_json::to_vec(&entry).map_err(|e| S3Error::S3Operation {
             message: format!("Failed to serialize entry: {e}"),
@@ -219,7 +223,7 @@ impl DataRepository {
             "handle stored in S3",
         );
 
-        Ok(entry)
+        Ok((entry, created_at))
     }
 
     /// HEAD-checks whether a handle key is absent.
@@ -286,7 +290,8 @@ impl DataRepository {
 
         let mut results = Vec::with_capacity(entries.len());
         for entry in entries {
-            results.push(self.create_handle(&entry).await?);
+            let (handle_entry, _) = self.create_handle(&entry).await?;
+            results.push(handle_entry);
         }
         Ok(results)
     }

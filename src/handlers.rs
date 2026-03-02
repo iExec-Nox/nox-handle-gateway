@@ -80,7 +80,7 @@ pub async fn create_handle(
         created_at: None,
     };
 
-    let new_handle = state.repository.create_handle(&entry).await?;
+    let (_, created_at_dt) = state.repository.create_handle(&entry).await?;
 
     // HandleProof
     let domain = eip712_domain! {
@@ -90,13 +90,7 @@ pub async fn create_handle(
         verifying_contract: state.config.chain.nox_compute_contract,
     };
 
-    let created_at = U256::from(
-        new_handle
-            .created_at
-            .ok_or_else(|| AppError::SigningError("created_at not set by repository".to_string()))?
-            .and_utc()
-            .timestamp(),
-    );
+    let created_at = U256::from(created_at_dt.and_utc().timestamp());
     let proof = HandleProof {
         handle: B256::from(&handle),
         owner: request.owner,
