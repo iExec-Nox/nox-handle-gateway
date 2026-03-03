@@ -10,6 +10,12 @@ sol! {
         function isViewer(bytes32 handle, address viewer) external view returns (bool);
         function kmsPublicKey() external view returns (bytes memory);
     }
+
+    #[sol(rpc)]
+    interface IERC1271 {
+        function isValidSignature(bytes32 hash, bytes calldata signature)
+            external view returns (bytes4);
+    }
 }
 
 #[derive(Debug, Error)]
@@ -18,6 +24,8 @@ pub enum RpcError {
     AccessDenied,
     #[error("RPC call failed: {0}")]
     CallFailure(#[from] alloy_contract::Error),
+    #[error("ERC-1271: invalid signature")]
+    InvalidSignature,
     #[error("Invalid KMS public key: {0}")]
     InvalidKey(String),
     #[error("RPC provider error: {0}")]
@@ -60,6 +68,36 @@ impl NoxClient {
             Ok(())
         } else {
             Err(RpcError::AccessDenied)
+        }
+    }
+
+    /// Verify an ERC-1271 signature on a Smart Account contract.
+    pub async fn verify_erc1271(
+        &self,
+        hash: B256,
+        signature: &[u8],
+        address: Address,
+    ) -> Result<(), RpcError> {
+        use alloy_primitives::{Bytes, FixedBytes};
+
+        const MAGIC_VALUE: FixedBytes<4> = FixedBytes([0x16, 0x26, 0xba, 0x7e]);
+
+        let provider = self.contract.provider().clone();
+        let contract = IERC1271::new(address, provider);
+
+        let result = contract
+            .isValidSignature(hash, Bytes::from(signature.to_vec()))
+            .call()
+            .await
+            .map_err(|e| match e {
+                alloy_contract::Error::TransportError(_) => RpcError::CallFailure(e),
+                _ => RpcError::InvalidSignature,
+            })?;
+
+        if result == MAGIC_VALUE {
+            Ok(())
+        } else {
+            Err(RpcError::InvalidSignature)
         }
     }
 }

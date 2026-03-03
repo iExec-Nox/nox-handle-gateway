@@ -151,9 +151,12 @@ pub async fn get_handle_crypto_material(
         warn!(
             user = payload.userAddress.to_string(),
             recovered = recovered_address.to_string(),
-            "recovered address mismatch",
+            "recovered address mismatch — attempting ERC-1271 fallback",
         );
-        return Err(AppError::Unauthorized("invalid signature".to_string()));
+        state
+            .nox_client
+            .verify_erc1271(hash, &signature_bytes, payload.userAddress)
+            .await?;
     }
 
     let now = U256::from(Utc::now().timestamp());
