@@ -221,9 +221,9 @@ impl DataRepository {
 
         info!(
             handle = %entry.handle,
-            e_tag = ?output.e_tag(),
-            version_id = ?output.version_id(),
-            checksum_crc64_nvme = ?output.checksum_crc64_nvme(),
+            e_tag = output.e_tag(),
+            version_id = output.version_id(),
+            checksum_crc64_nvme = output.checksum_crc64_nvme(),
             "handle stored in S3",
         );
 
