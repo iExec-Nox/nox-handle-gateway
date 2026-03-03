@@ -53,7 +53,7 @@ impl<E: std::error::Error + 'static, R: Debug> From<SdkError<E, R>> for S3Error 
 /// field is set server-side by [`DataRepository::create_handle`] and written
 /// to the S3 object metadata under `"created-at"` for observability; it is
 /// excluded from the JSON body via `#[serde(skip)]`.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct HandleEntry {
     pub handle: String,
     pub ciphertext: String,
@@ -117,7 +117,11 @@ impl DataRepository {
             .send()
             .await
             .map_err(|e| {
-                anyhow::anyhow!("S3 bucket '{}' is not accessible: {:?}", self.bucket, e)
+                anyhow::anyhow!(
+                    "S3 bucket '{}' is not accessible: {}",
+                    self.bucket,
+                    e.into_service_error()
+                )
             })?;
 
         let lock_response = self
@@ -128,9 +132,9 @@ impl DataRepository {
             .await
             .map_err(|e| {
                 anyhow::anyhow!(
-                    "S3 bucket '{}' does not have Object Lock configured: {:?}",
+                    "S3 bucket '{}' does not have Object Lock configured: {}",
                     self.bucket,
-                    e
+                    e.into_service_error()
                 )
             })?;
 
