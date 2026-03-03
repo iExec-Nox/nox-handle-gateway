@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime};
 
 use aws_sdk_s3::{
     Client,
-    config::Credentials,
+    config::{Builder, Credentials, timeout::TimeoutConfig},
     error::SdkError,
     primitives::DateTime,
     types::{ChecksumAlgorithm, ObjectLockEnabled, ObjectLockMode},
@@ -86,16 +86,14 @@ impl DataRepository {
             .region(aws_config::Region::new(config.region.clone()))
             .endpoint_url(&config.endpoint_url)
             .timeout_config(
-                aws_sdk_s3::config::timeout::TimeoutConfig::builder()
+                TimeoutConfig::builder()
                     .operation_timeout(Duration::from_secs(config.timeout))
                     .build(),
             )
             .load()
             .await;
 
-        let s3_config = aws_sdk_s3::config::Builder::from(&aws_config)
-            .force_path_style(true)
-            .build();
+        let s3_config = Builder::from(&aws_config).force_path_style(true).build();
 
         let repo = Self {
             client: Client::from_conf(s3_config),
@@ -209,7 +207,7 @@ impl DataRepository {
             .metadata(METADATA_CONTENT_SHA256, sha256);
 
         let output = request.send().await.map_err(|err| {
-            if let aws_sdk_s3::error::SdkError::ServiceError(ref service_err) = err
+            if let SdkError::ServiceError(ref service_err) = err
                 && service_err.raw().status().as_u16() == 412
             {
                 return S3Error::AlreadyExists {
