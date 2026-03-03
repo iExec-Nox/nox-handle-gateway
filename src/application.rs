@@ -81,7 +81,7 @@ impl Application {
             kms_public_key,
             self.config.kms.signer_address,
         )?;
-        let repository = DataRepository::new(&self.config.server.backend_url).await?;
+        let repository = DataRepository::new(&self.config.s3).await?;
 
         let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
         let state = AppState {

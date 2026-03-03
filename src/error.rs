@@ -8,6 +8,7 @@ use thiserror::Error;
 
 use crate::crypto;
 use crate::kms;
+use crate::repository;
 use crate::rpc;
 
 #[derive(Debug, Error)]
@@ -26,10 +27,10 @@ pub enum AppError {
     KmsError(#[from] kms::Error),
     #[error("Operands not prepared for computation")]
     OperandsNotPrepared,
-    #[error("Database error: {0}")]
-    RepositoryError(#[from] sqlx::error::Error),
     #[error("Signing error: {0}")]
     SigningError(String),
+    #[error("Storage error: {0}")]
+    StorageError(#[from] repository::S3Error),
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 }
@@ -44,8 +45,8 @@ impl AppError {
             AppError::InvalidSolidityValue(_) => "invalid_value",
             AppError::KmsError(_) => "kms",
             AppError::OperandsNotPrepared => "operands",
-            AppError::RepositoryError(_) => "repository",
             AppError::SigningError(_) => "signing",
+            AppError::StorageError(_) => "storage",
             AppError::Unauthorized(_) => "unauthorized",
         }
     }
@@ -66,8 +67,13 @@ impl AppError {
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             AppError::OperandsNotPrepared => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::RepositoryError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::StorageError(e) => match e {
+                repository::S3Error::NotFound { .. } => StatusCode::NOT_FOUND,
+                repository::S3Error::AlreadyExists { .. }
+                | repository::S3Error::BatchConflict { .. } => StatusCode::CONFLICT,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            },
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
         }
     }

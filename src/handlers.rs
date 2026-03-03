@@ -8,7 +8,7 @@ use axum::{
     http::header::HeaderMap,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use chrono::{NaiveDateTime, TimeZone, Utc};
+use chrono::{TimeZone, Utc};
 use futures::future::join_all;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
@@ -77,10 +77,10 @@ pub async fn create_handle(
         ciphertext: serialize_bytes(&ecies_ciphertext.ciphertext),
         public_key: serialize_bytes(&ecies_ciphertext.ephemeral_pubkey),
         nonce: serialize_bytes(&ecies_ciphertext.nonce),
-        created_at: NaiveDateTime::default(),
+        created_at: None,
     };
 
-    let new_handle = state.repository.create_handle(&entry).await?;
+    let (_, created_at_dt) = state.repository.create_handle(&entry).await?;
 
     // HandleProof
     let domain = eip712_domain! {
@@ -90,7 +90,7 @@ pub async fn create_handle(
         verifying_contract: state.config.chain.nox_compute_contract,
     };
 
-    let created_at = U256::from(new_handle.created_at.and_utc().timestamp());
+    let created_at = U256::from(created_at_dt.and_utc().timestamp());
     let proof = HandleProof {
         handle: B256::from(&handle),
         owner: request.owner,

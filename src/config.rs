@@ -11,6 +11,7 @@ pub struct Config {
     pub server: ServerConfig,
     pub chain: ChainConfig,
     pub kms: KmsConfig,
+    pub s3: S3Config,
     pub signer: SignerConfig,
 }
 
@@ -18,7 +19,21 @@ pub struct Config {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
-    pub backend_url: String,
+}
+
+/// S3/MinIO connection configuration.
+///
+/// `access_key`, `secret_key`, and `region` have no defaults — the process
+/// exits at startup if they are not provided via environment variables or a
+/// config file.
+#[derive(Debug, Clone, Deserialize)]
+pub struct S3Config {
+    pub endpoint_url: String,
+    pub bucket: String,
+    pub access_key: String,
+    pub secret_key: String,
+    pub region: String,
+    pub timeout: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -45,6 +60,9 @@ impl Config {
         let config = ConfigBuilder::builder()
             .set_default("server.host", "0.0.0.0")?
             .set_default("server.port", 3000)?
+            .set_default("s3.endpoint_url", "http://localhost:9900")?
+            .set_default("s3.bucket", "handles")?
+            .set_default("s3.timeout", 30)?
             .set_default("chain.id", 421614)?
             .set_default(
                 "chain.nox_compute_contract",
