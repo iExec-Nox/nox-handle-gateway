@@ -49,18 +49,13 @@ impl<E: std::error::Error + 'static, R: Debug> From<SdkError<E, R>> for S3Error 
 
 /// An encrypted handle entry stored as a JSON object in S3.
 ///
-/// The S3 key is the `handle` field with a `0x` prefix. The `created_at`
-/// field is set server-side by [`DataRepository::create_handle`] and written
-/// to the S3 object metadata under `"created-at"` for observability; it is
-/// excluded from the JSON body via `#[serde(skip)]`.
+/// The S3 key is the `handle` field with a `0x` prefix.
 #[derive(Clone, Deserialize, Serialize)]
 pub struct HandleEntry {
     pub handle: String,
     pub ciphertext: String,
     pub public_key: String,
     pub nonce: String,
-    #[serde(skip)]
-    pub created_at: Option<NaiveDateTime>,
 }
 
 /// S3/MinIO client wrapper for handle storage operations.
@@ -155,9 +150,8 @@ impl DataRepository {
 
     /// Stores a single handle entry in S3 under an If-None-Match guard.
     ///
-    /// Sets `created_at` to the current server time before writing. The
-    /// timestamp is excluded from the JSON body but written to the S3 object
-    /// metadata under `"created-at"` for observability.
+    /// Records `created_at` as the current server time and writes it to the S3
+    /// object metadata under `"created-at"` for observability.
     ///
     /// Uses `If-None-Match: *` so the existence check and write are a single
     /// atomic operation. A 412 response (key already exists) is mapped to
@@ -173,15 +167,10 @@ impl DataRepository {
     /// and return [`S3Error::AlreadyExists`] even though the write was ours.
     /// Callers must treat [`S3Error::AlreadyExists`] on a fresh write as a
     /// possible false positive and verify the stored object if needed.
-    pub async fn create_handle(
-        &self,
-        entry: &HandleEntry,
-    ) -> Result<(HandleEntry, NaiveDateTime), S3Error> {
-        let mut entry = entry.clone();
+    pub async fn create_handle(&self, entry: &HandleEntry) -> Result<NaiveDateTime, S3Error> {
         let created_at = Utc::now().naive_utc();
-        entry.created_at = Some(created_at);
 
-        let data = serde_json::to_vec(&entry).map_err(|e| S3Error::S3Operation {
+        let data = serde_json::to_vec(entry).map_err(|e| S3Error::S3Operation {
             message: format!("Failed to serialize entry: {e}"),
         })?;
 
@@ -203,7 +192,7 @@ impl DataRepository {
             ))
             .checksum_algorithm(ChecksumAlgorithm::Crc64Nvme)
             .metadata("handle", &entry.handle)
-            .metadata("created-at", entry.created_at.unwrap().to_string())
+            .metadata("created-at", created_at.to_string())
             .metadata(METADATA_CONTENT_SHA256, sha256);
 
         let output = request.send().await.map_err(|err| {
@@ -225,7 +214,7 @@ impl DataRepository {
             "handle stored in S3",
         );
 
-        Ok((entry, created_at))
+        Ok(created_at)
     }
 
     /// HEAD-checks whether a handle key is absent.
@@ -262,16 +251,12 @@ impl DataRepository {
     /// between the check and write phases.
     ///
     /// Three outcomes:
-    /// - All handles absent → writes all, returns them.
-    /// - All handles already exist → idempotent success; returns an empty vec.
-    ///   This covers NATS redelivery where the runner replays an already-committed
-    ///   batch.
+    /// - All handles absent → writes all.
+    /// - All handles already exist → idempotent success. This covers NATS
+    ///   redelivery where the runner replays an already-committed batch.
     /// - Partial conflict (some exist, some don't) → returns
     ///   [`S3Error::BatchConflict`] with the conflicting keys; nothing is written.
-    pub async fn create_handles(
-        &self,
-        entries: Vec<HandleEntry>,
-    ) -> Result<Vec<HandleEntry>, S3Error> {
+    pub async fn create_handles(&self, entries: Vec<HandleEntry>) -> Result<(), S3Error> {
         let mut conflicts = Vec::new();
         for entry in &entries {
             match self.check_handle_absent(&entry.handle).await? {
@@ -282,7 +267,7 @@ impl DataRepository {
 
         if conflicts.len() == entries.len() {
             info!("all handles already exist, idempotent retry — returning success");
-            return Ok(vec![]);
+            return Ok(());
         }
 
         if !conflicts.is_empty() {
@@ -290,12 +275,10 @@ impl DataRepository {
             return Err(S3Error::BatchConflict { conflicts });
         }
 
-        let mut results = Vec::with_capacity(entries.len());
-        for entry in entries {
-            let (handle_entry, _) = self.create_handle(&entry).await?;
-            results.push(handle_entry);
+        for entry in &entries {
+            self.create_handle(entry).await?;
         }
-        Ok(results)
+        Ok(())
     }
 
     /// Fetches and deserializes a single handle entry by its S3 key.

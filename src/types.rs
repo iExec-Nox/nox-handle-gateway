@@ -2,23 +2,26 @@ use std::str::FromStr;
 
 use alloy_sol_types::sol;
 use k256::elliptic_curve::rand_core::{OsRng, RngCore};
-use serde::{Deserialize, Serialize, Serializer};
+use serde::Deserialize;
 
 use crate::error::AppError;
 use crate::utils::serialize_bytes;
 
+/// Current handle version encoded in byte 31.
 const HANDLE_VERSION: u8 = 0x00; // V0
+/// EIP-712 domain version shared across all domains in this service.
 pub const EIP_712_DOMAIN_VERSION: &str = "1";
+/// EIP-712 domain name used for `DelegateAuthorization` and `DelegateResponseProof`.
 pub const PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME: &str = "ProtocolDelegate";
 
-/// Value type for encrypted data
+/// Solidity value type for an encrypted handle.
 ///
-/// Encoding (byte 30 of handle):
-/// - 0-3: Special types (bool, address, bytes, string)
-/// - 4-35: uint8..uint256 (32 types)
-/// - 36-67: int8..int256 (32 types)
-/// - 68-99: bytes1..bytes32 (32 types)
-/// - 100-255: Reserved
+/// Encoded as a single byte in position 30 of the handle:
+/// - `0–3`: special types (bool, address, bytes, string)
+/// - `4–35`: uint8..uint256
+/// - `36–67`: int8..int256
+/// - `68–99`: bytes1..bytes32
+/// - `100–255`: reserved
 #[derive(Debug, Clone, PartialEq)]
 pub enum SolidityType {
     // Special types (0-3)
@@ -35,6 +38,7 @@ pub enum SolidityType {
 }
 
 impl SolidityType {
+    /// Returns the single-byte encoding of this type for use in a handle.
     pub fn to_byte(&self) -> u8 {
         match self {
             SolidityType::Bool => 0,
@@ -63,6 +67,10 @@ impl SolidityType {
 impl FromStr for SolidityType {
     type Err = AppError;
 
+    /// Parses a Solidity type string (e.g. `"uint256"`, `"bool"`, `"bytes32"`).
+    ///
+    /// Returns [`AppError::InvalidSolidityType`] for unknown types or
+    /// out-of-range bit/byte widths.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "bool" => Ok(SolidityType::Bool),
@@ -107,26 +115,10 @@ impl FromStr for SolidityType {
     }
 }
 
-// TODO: remove this if serialization is still unused for SolidityType
-impl Serialize for SolidityType {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let s = match self {
-            SolidityType::Bool => "bool".to_string(),
-            SolidityType::Address => "address".to_string(),
-            SolidityType::Bytes => "bytes".to_string(),
-            SolidityType::String => "string".to_string(),
-            SolidityType::Uint(bits) => format!("uint{bits}"),
-            SolidityType::Int(bits) => format!("int{bits}"),
-            SolidityType::FixedBytes(size) => format!("bytes{size}"),
-        };
-        serializer.serialize_str(&s)
-    }
-}
-
 impl<'de> Deserialize<'de> for SolidityType {
+    /// Deserializes a `SolidityType` from its string representation.
+    ///
+    /// Delegates to [`FromStr`]; invalid strings produce a serde error.
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -136,13 +128,13 @@ impl<'de> Deserialize<'de> for SolidityType {
     }
 }
 
-/// 32-byte handle
+/// 32-byte opaque handle identifying an encrypted value.
 ///
 /// Layout:
-/// - [0-25]  prehandle: random 26 bytes
-/// - [26-29] chain_id (big-endian)
-/// - [30]    solidity_type
-/// - [31]    version
+/// - `[0–25]`  prehandle: 26 random bytes (OsRng)
+/// - `[26–29]` chain_id (big-endian u32)
+/// - `[30]`    solidity_type byte (see [`SolidityType::to_byte`])
+/// - `[31]`    version (currently `0x00`)
 #[derive(Debug)]
 pub struct Handle {
     pub prehandle: [u8; 26],
@@ -152,6 +144,7 @@ pub struct Handle {
 }
 
 impl Handle {
+    /// Creates a new handle with a cryptographically random prehandle.
     pub fn new(chain_id: u32, solidity_type: SolidityType) -> Self {
         let mut prehandle = [0u8; 26];
         OsRng.fill_bytes(&mut prehandle);
@@ -164,6 +157,7 @@ impl Handle {
         }
     }
 
+    /// Serializes the handle into its canonical 32-byte form.
     pub fn to_bytes(&self) -> [u8; 32] {
         let mut bytes = [0u8; 32];
         bytes[0..26].copy_from_slice(&self.prehandle);
@@ -175,6 +169,7 @@ impl Handle {
 }
 
 sol! {
+    /// EIP-712 struct signed by the gateway to prove handle creation.
     #[derive(Debug)]
     struct HandleProof {
         bytes32 handle;
@@ -183,6 +178,7 @@ sol! {
         uint256 createdAt;
     }
 
+    /// EIP-712 struct signed by the user to authorize decryption of a handle.
     #[derive(Debug, Deserialize)]
     struct DataAccessAuthorization {
         address userAddress;
@@ -191,12 +187,14 @@ sol! {
         uint256 expiresAt;
     }
 
+    /// EIP-712 struct signed by the KMS to authorize key delegation.
     #[derive(Debug)]
     struct DelegateAuthorization {
         string ephemeralPubKey;
         string targetPubKey;
     }
 
+    /// EIP-712 struct signed by the KMS over the re-encrypted shared secret.
     #[derive(Debug)]
     struct DelegateResponseProof {
         string encryptedSharedSecret;
@@ -204,13 +202,13 @@ sol! {
 }
 
 impl HandleProof {
-    /// Create a new 137 bytes HandleProof for EIP-712 signing.
+    /// Serializes the proof to its canonical 137-byte hex-encoded form.
     ///
     /// Layout:
-    /// - [0-19]   owner (20 bytes)
-    /// - [20-39]  app (20 bytes)
-    /// - [40-71]  createdAt (uint256 BE)
-    /// - [72-136] signature (r: 32 + s: 32 + v: 1)
+    /// - `[0–19]`   owner (20 bytes)
+    /// - `[20–39]`  app (20 bytes)
+    /// - `[40–71]`  createdAt (uint256 BE)
+    /// - `[72–136]` signature (r: 32 + s: 32 + v: 1)
     pub fn to_serialized_bytes(&self, signature: [u8; 65]) -> String {
         let mut bytes = [0u8; 137];
         bytes[0..20].copy_from_slice(self.owner.as_slice());

@@ -77,10 +77,9 @@ pub async fn create_handle(
         ciphertext: serialize_bytes(&ecies_ciphertext.ciphertext),
         public_key: serialize_bytes(&ecies_ciphertext.ephemeral_pubkey),
         nonce: serialize_bytes(&ecies_ciphertext.nonce),
-        created_at: None,
     };
 
-    let (_, created_at_dt) = state.repository.create_handle(&entry).await?;
+    let created_at_dt = state.repository.create_handle(&entry).await?;
 
     // HandleProof
     let domain = eip712_domain! {
