@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use alloy_primitives::hex::encode_prefixed;
+use alloy_primitives::hex;
 use alloy_sol_types::sol;
 use k256::elliptic_curve::rand_core::{OsRng, RngCore};
 use serde::Deserialize;
@@ -215,6 +215,6 @@ impl HandleProof {
         bytes[20..40].copy_from_slice(self.app.as_slice());
         bytes[40..72].copy_from_slice(&self.createdAt.to_be_bytes::<32>());
         bytes[72..137].copy_from_slice(&signature);
-        encode_prefixed(bytes)
+        hex::encode_prefixed(bytes)
     }
 }

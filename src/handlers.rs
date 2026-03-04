@@ -1,7 +1,4 @@
-use alloy_primitives::{
-    Address, B256, U256,
-    hex::{self, encode_prefixed},
-};
+use alloy_primitives::{Address, B256, U256, hex};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolStruct, eip712_domain};
@@ -72,13 +69,13 @@ pub async fn create_handle(
 
     let handle = Handle::new(state.config.chain.id, request.solidity_type).to_bytes();
 
-    let serialized_handle = encode_prefixed(handle);
+    let serialized_handle = hex::encode_prefixed(handle);
 
     let entry = HandleEntry {
         handle: serialized_handle.clone(),
-        ciphertext: encode_prefixed(&ecies_ciphertext.ciphertext),
-        public_key: encode_prefixed(ecies_ciphertext.ephemeral_pubkey),
-        nonce: encode_prefixed(ecies_ciphertext.nonce),
+        ciphertext: hex::encode_prefixed(&ecies_ciphertext.ciphertext),
+        public_key: hex::encode_prefixed(ecies_ciphertext.ephemeral_pubkey),
+        nonce: hex::encode_prefixed(ecies_ciphertext.nonce),
     };
 
     let created_at_dt = state.repository.create_handle(&entry).await?;

@@ -1,7 +1,4 @@
-use alloy_primitives::{
-    Address,
-    hex::{self, encode_prefixed},
-};
+use alloy_primitives::{Address, hex};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolStruct, eip712_domain};
@@ -15,7 +12,6 @@ use crate::types::{
     DelegateAuthorization, DelegateResponseProof, EIP_712_DOMAIN_VERSION,
     PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME,
 };
-use crate::utils::strip_0x_prefix;
 
 /// Errors returned by [`KmsClient`] operations.
 #[derive(Debug, Error)]
@@ -160,7 +156,7 @@ impl KmsClient {
         chain_id: u32,
     ) -> Result<(), Error> {
         let response_struct = DelegateResponseProof {
-            encryptedSharedSecret: strip_0x_prefix(&response.encrypted_shared_secret).to_string(),
+            encryptedSharedSecret: response.encrypted_shared_secret.clone(),
         };
 
         let domain = eip712_domain! {
@@ -201,8 +197,8 @@ impl KmsClient {
         chain_id: u32,
     ) -> Result<String, Error> {
         let auth = DelegateAuthorization {
-            ephemeralPubKey: strip_0x_prefix(ephemeral_pub_key).to_string(),
-            targetPubKey: strip_0x_prefix(target_pub_key).to_string(),
+            ephemeralPubKey: ephemeral_pub_key.to_string(),
+            targetPubKey: target_pub_key.to_string(),
         };
 
         let domain = eip712_domain! {
@@ -215,6 +211,6 @@ impl KmsClient {
             .sign_typed_data_sync(&auth, &domain)
             .map_err(|e| Error::Signing(e.to_string()))?;
 
-        Ok(encode_prefixed(signature.as_bytes()))
+        Ok(hex::encode_prefixed(signature.as_bytes()))
     }
 }
