@@ -17,6 +17,7 @@ use crate::types::{
 };
 use crate::utils::strip_0x_prefix;
 
+/// Errors returned by [`KmsClient`] operations.
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Failed to build KMS HTTP client: {0}")]
@@ -42,6 +43,7 @@ impl From<reqwest::Error> for Error {
     }
 }
 
+/// Request body sent to `POST /v0/delegate` on the KMS.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct KmsDelegateRequestBody {
@@ -49,6 +51,7 @@ struct KmsDelegateRequestBody {
     target_pub_key: String,
 }
 
+/// Response body received from `POST /v0/delegate` on the KMS.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KmsDelegateResponse {
@@ -56,6 +59,10 @@ pub struct KmsDelegateResponse {
     pub proof: String,
 }
 
+/// HTTP client for the KMS `POST /v0/delegate` endpoint.
+///
+/// Holds the KMS EC public key (used for ECIES encryption) and the expected
+/// signer address (used to verify EIP-712 proofs on every delegate response).
 #[derive(Clone)]
 pub struct KmsClient {
     pub client: Client,
@@ -65,6 +72,11 @@ pub struct KmsClient {
 }
 
 impl KmsClient {
+    /// Creates a new KMS client.
+    ///
+    /// `public_key` is the KMS EC public key fetched on-chain from NoxCompute.
+    /// `kms_signer_address` is the Ethereum address whose EIP-712 signature must
+    /// appear on every delegate response.
     pub fn new(
         base_url: String,
         public_key: PublicKey,
@@ -86,6 +98,11 @@ impl KmsClient {
         })
     }
 
+    /// Calls `POST /v0/delegate` and returns the encrypted shared secret.
+    ///
+    /// Signs the request with an EIP-712 [`DelegateAuthorization`] and verifies
+    /// the KMS response carries a valid [`DelegateResponseProof`] from the
+    /// expected signer address.
     pub async fn get_encrypted_shared_secret(
         &self,
         ephemeral_pub_key: &str,
@@ -134,6 +151,9 @@ impl KmsClient {
         Ok(data.encrypted_shared_secret)
     }
 
+    /// Verifies the EIP-712 [`DelegateResponseProof`] in a KMS delegate response.
+    ///
+    /// Returns an error if the recovered signer does not match [`Self::kms_signer_address`].
     fn verify_delegate_response(
         &self,
         response: &KmsDelegateResponse,
@@ -170,6 +190,9 @@ impl KmsClient {
         Ok(())
     }
 
+    /// Builds and signs an EIP-712 [`DelegateAuthorization`] for a delegate request.
+    ///
+    /// Returns the hex-encoded signature to be sent as the `Authorization: Bearer` header.
     fn build_delegate_authorization(
         &self,
         ephemeral_pub_key: &str,
