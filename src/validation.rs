@@ -1,8 +1,8 @@
 use alloy_primitives::hex;
 
-use crate::crypto::strip_0x_prefix;
 use crate::error::AppError;
 use crate::types::SolidityType;
+use crate::utils::strip_0x_prefix;
 
 /// Decode hex value and validate size matches type.
 pub fn decode_and_validate_value(

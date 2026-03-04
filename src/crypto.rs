@@ -87,8 +87,7 @@ pub fn load_signer(wallet_key: &str) -> Result<PrivateKeySigner, Error> {
         ));
     }
 
-    let hex_clean = strip_0x_prefix(wallet_key);
-    let bytes = hex::decode(hex_clean)
+    let bytes = hex::decode(wallet_key)
         .map_err(|e| Error::SignerError(format!("Invalid hex in SIGNER__WALLET_KEY: {e}")))?;
 
     if bytes.len() != 32 {
@@ -109,9 +108,4 @@ pub fn load_signer(wallet_key: &str) -> Result<PrivateKeySigner, Error> {
     );
 
     Ok(signer)
-}
-
-/// Strip the `0x` prefix from a string.
-pub fn strip_0x_prefix(s: &str) -> &str {
-    s.strip_prefix("0x").unwrap_or(s)
 }

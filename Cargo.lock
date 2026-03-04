@@ -3369,7 +3369,6 @@ dependencies = [
  "chrono",
  "config",
  "config-secret",
- "const-hex",
  "futures",
  "hkdf",
  "k256",

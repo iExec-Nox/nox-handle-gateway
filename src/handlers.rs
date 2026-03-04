@@ -1,4 +1,7 @@
-use alloy_primitives::{Address, B256, U256, hex};
+use alloy_primitives::{
+    Address, B256, U256,
+    hex::{self, encode_prefixed},
+};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolStruct, eip712_domain};
@@ -9,14 +12,13 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{TimeZone, Utc};
-use const_hex::encode_prefixed;
 use futures::future::join_all;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
 use crate::application::AppState;
-use crate::crypto::{ecies_encrypt, strip_0x_prefix};
+use crate::crypto::ecies_encrypt;
 use crate::error::AppError;
 use crate::kms::KmsClient;
 use crate::repository::HandleEntry;
@@ -138,8 +140,8 @@ pub async fn get_handle_crypto_material(
     };
     let payload = authorization.payload;
     let hash = payload.eip712_signing_hash(&domain);
-    let signature_bytes = hex::decode(strip_0x_prefix(&authorization.signature))
-        .map_err(|e| AppError::Unauthorized(e.to_string()))?;
+    let signature_bytes =
+        hex::decode(&authorization.signature).map_err(|e| AppError::Unauthorized(e.to_string()))?;
     let signature =
         Signature::from_raw(&signature_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
     let recovered_address = signature
@@ -167,8 +169,7 @@ pub async fn get_handle_crypto_material(
         ));
     }
 
-    let handle_raw =
-        hex::decode(strip_0x_prefix(&handle)).map_err(|e| AppError::BadRequest(e.to_string()))?;
+    let handle_raw = hex::decode(&handle).map_err(|e| AppError::BadRequest(e.to_string()))?;
     if handle_raw.len() != 32 {
         return Err(AppError::BadRequest("invalid handle".to_string()));
     }

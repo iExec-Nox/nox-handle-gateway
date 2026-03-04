@@ -1,19 +1,21 @@
-use alloy_primitives::{Address, hex};
+use alloy_primitives::{
+    Address,
+    hex::{self, encode_prefixed},
+};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolStruct, eip712_domain};
-use const_hex::encode_prefixed;
 use k256::PublicKey;
 use reqwest::{Client, header::AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, error, info};
 
-use crate::crypto::strip_0x_prefix;
 use crate::types::{
     DelegateAuthorization, DelegateResponseProof, EIP_712_DOMAIN_VERSION,
     PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME,
 };
+use crate::utils::strip_0x_prefix;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -149,7 +151,7 @@ impl KmsClient {
 
         let signing_hash = response_struct.eip712_signing_hash(&domain);
 
-        let signature_bytes = hex::decode(strip_0x_prefix(&response.proof))
+        let signature_bytes = hex::decode(&response.proof)
             .map_err(|e| Error::InvalidResponseSignature(format!("invalid hex: {e}")))?;
         let proof = Signature::from_raw(&signature_bytes)
             .map_err(|e| Error::InvalidResponseSignature(format!("invalid proof: {e}")))?;
