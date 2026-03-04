@@ -13,7 +13,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{debug, info, warn};
 
 use crate::config::Config;
-use crate::crypto::load_or_create_signer;
+use crate::crypto::load_signer;
 use crate::handlers;
 use crate::kms::KmsClient;
 use crate::repository::DataRepository;
@@ -67,7 +67,7 @@ impl Application {
     }
 
     pub async fn run(self) -> anyhow::Result<()> {
-        let signer = load_or_create_signer(&self.config.signer)?;
+        let signer = load_signer(&self.config.signer.wallet_key)?;
         info!("EIP-712 signer address: {}", signer.address());
 
         let nox_client: NoxClient = NoxClient::new(

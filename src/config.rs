@@ -1,11 +1,13 @@
-use std::path::PathBuf;
-
 use alloy_primitives::Address;
 use config::{Config as ConfigBuilder, ConfigError, Environment};
 use config_secret::EnvironmentSecretFile;
 use serde::Deserialize;
 use tracing::debug;
 
+/// Top-level application configuration loaded from environment variables.
+///
+/// All fields are populated by [`Config::load`]. Most have sensible defaults;
+/// exceptions are noted on the individual sub-config types.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
@@ -15,6 +17,7 @@ pub struct Config {
     pub signer: SignerConfig,
 }
 
+/// HTTP server bind configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerConfig {
     pub host: String,
@@ -36,6 +39,7 @@ pub struct S3Config {
     pub timeout: u64,
 }
 
+/// Ethereum chain and NoxCompute contract configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChainConfig {
     pub id: u32,
@@ -43,19 +47,30 @@ pub struct ChainConfig {
     pub rpc_url: String,
 }
 
+/// KMS service configuration.
 #[derive(Clone, Debug, Deserialize)]
 pub struct KmsConfig {
     pub url: String,
     pub signer_address: Address,
 }
 
+/// EIP-712 signer configuration.
+///
+/// The private key is injected via the `NOX_HANDLE_GATEWAY_SIGNER__WALLET_KEY`
+/// environment variable as a hex-encoded 32-byte scalar (with or without `0x`
+/// prefix). There is no default — the process exits at startup if the key is
+/// absent or malformed.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SignerConfig {
-    pub keystore_filename: PathBuf,
-    pub keystore_password: String,
+    pub wallet_key: String,
 }
 
 impl Config {
+    /// Loads configuration from environment variables.
+    ///
+    /// Variables are prefixed `NOX_HANDLE_GATEWAY_` with `__` as the nested
+    /// separator (e.g. `NOX_HANDLE_GATEWAY_S3__BUCKET`). Secret-file variants
+    /// are also supported via `config_secret`.
     pub fn load() -> Result<Self, ConfigError> {
         let config = ConfigBuilder::builder()
             .set_default("server.host", "0.0.0.0")?
@@ -74,8 +89,7 @@ impl Config {
                 "kms.signer_address",
                 "0x0000000000000000000000000000000000000000",
             )?
-            .set_default("signer.keystore_filename", "gateway_keystore.json")?
-            .set_default("signer.keystore_password", "")?
+            .set_default("signer.wallet_key", "")?
             .add_source(
                 Environment::with_prefix("NOX_HANDLE_GATEWAY")
                     .prefix_separator("_")
@@ -88,6 +102,7 @@ impl Config {
         config.try_deserialize()
     }
 
+    /// Returns the `host:port` string used to bind the HTTP listener.
     pub fn bind_addr(&self) -> String {
         let addr = format!("{}:{}", self.server.host, self.server.port);
         debug!("Binding address: {}", addr);

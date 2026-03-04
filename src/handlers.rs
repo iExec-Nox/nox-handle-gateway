@@ -9,18 +9,18 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{TimeZone, Utc};
+use const_hex::encode_prefixed;
 use futures::future::join_all;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
 use crate::application::AppState;
-use crate::crypto::ecies_encrypt;
+use crate::crypto::{ecies_encrypt, strip_0x_prefix};
 use crate::error::AppError;
 use crate::kms::KmsClient;
 use crate::repository::HandleEntry;
 use crate::types::{DataAccessAuthorization, Handle, HandleProof, SolidityType};
-use crate::utils::{serialize_bytes, strip_0x_prefix};
 use crate::validation::decode_and_validate_value;
 
 // EIP-712 domain name for HandleProof generation
@@ -70,13 +70,13 @@ pub async fn create_handle(
 
     let handle = Handle::new(state.config.chain.id, request.solidity_type).to_bytes();
 
-    let serialized_handle = serialize_bytes(&handle);
+    let serialized_handle = encode_prefixed(handle);
 
     let entry = HandleEntry {
         handle: serialized_handle.clone(),
-        ciphertext: serialize_bytes(&ecies_ciphertext.ciphertext),
-        public_key: serialize_bytes(&ecies_ciphertext.ephemeral_pubkey),
-        nonce: serialize_bytes(&ecies_ciphertext.nonce),
+        ciphertext: encode_prefixed(&ecies_ciphertext.ciphertext),
+        public_key: encode_prefixed(ecies_ciphertext.ephemeral_pubkey),
+        nonce: encode_prefixed(ecies_ciphertext.nonce),
     };
 
     let created_at_dt = state.repository.create_handle(&entry).await?;

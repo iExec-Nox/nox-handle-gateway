@@ -9,7 +9,7 @@ alloy-contract = "1.7.0"
 alloy-primitives = { version = "1.5.2", features = ["serde"] }
 alloy-provider = "1.7.0"
 alloy-signer = { version = "1.4.2", features = ["eip712"] }
-alloy-signer-local = { version = "1.5.2", features = ["keystore"] }
+alloy-signer-local = "1.5.2"
 alloy-sol-types = "1.5.2"
 anyhow = "1.0.100"
 aws-config = "1.8.13"
@@ -20,6 +20,7 @@ base64 = "0.22.1"
 chrono = { version = "0.4.42", features = ["serde"] }
 config = "0.15.19"
 config-secret = "0.1.0"
+const-hex = "1.18.1"
 futures = "0.3.31"
 hkdf = "0.12.4"
 k256 = { version = "0.13.4", features = ["ecdh"] }

@@ -2,17 +2,18 @@ use alloy_primitives::{Address, hex};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolStruct, eip712_domain};
+use const_hex::encode_prefixed;
 use k256::PublicKey;
 use reqwest::{Client, header::AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
+use crate::crypto::strip_0x_prefix;
 use crate::types::{
     DelegateAuthorization, DelegateResponseProof, EIP_712_DOMAIN_VERSION,
     PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME,
 };
-use crate::utils::{serialize_bytes, strip_0x_prefix};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -112,8 +113,14 @@ impl KmsClient {
             .header(AUTHORIZATION, format!("Bearer {authorization}"))
             .json(&request_body)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+
+        if let Err(err) = response.error_for_status_ref() {
+            let status = response.status();
+            let error_body = response.text().await?;
+            error!("KMS delegate error {status}: {error_body}");
+            return Err(Error::InvalidResponse(err.to_string()));
+        }
 
         let data = response
             .json::<KmsDelegateResponse>()
@@ -183,6 +190,6 @@ impl KmsClient {
             .sign_typed_data_sync(&auth, &domain)
             .map_err(|e| Error::Signing(e.to_string()))?;
 
-        Ok(serialize_bytes(&signature.as_bytes()))
+        Ok(encode_prefixed(signature.as_bytes()))
     }
 }
