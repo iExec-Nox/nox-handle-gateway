@@ -22,9 +22,12 @@ use tracing::{info, warn};
 
 use crate::config::S3Config;
 
+/// Object Lock retention period: 100 years expressed in seconds.
 const RETENTION_DURATION_SECS: u64 = 100 * 365 * 24 * 3600;
+/// S3 metadata key for the SHA-256 hex digest of the stored JSON body.
 const METADATA_CONTENT_SHA256: &str = "content-sha256";
 
+/// Errors returned by [`DataRepository`] operations.
 #[derive(Error, Debug)]
 pub enum S3Error {
     #[error("Object already exists: {key}")]

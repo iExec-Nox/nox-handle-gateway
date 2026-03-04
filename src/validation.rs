@@ -2,7 +2,6 @@ use alloy_primitives::hex;
 
 use crate::error::AppError;
 use crate::types::SolidityType;
-use crate::utils::strip_0x_prefix;
 
 /// Decode hex value and validate size matches type.
 pub fn decode_and_validate_value(
@@ -14,23 +13,18 @@ pub fn decode_and_validate_value(
     Ok(bytes)
 }
 
-/// Decode hex string (with or without 0x prefix).
+/// Decode hex string (with or without `0x` prefix).
+///
+/// Returns an error for empty input (including bare `"0x"`). Odd-length and
+/// invalid-character errors are delegated to [`hex::decode`].
 fn decode_hex(value: &str) -> Result<Vec<u8>, AppError> {
-    let trimmed = strip_0x_prefix(value);
-
-    if trimmed.is_empty() {
+    if value.strip_prefix("0x").unwrap_or(value).is_empty() {
         return Err(AppError::InvalidSolidityValue(
             "empty hex value".to_string(),
         ));
     }
 
-    if !trimmed.len().is_multiple_of(2) {
-        return Err(AppError::InvalidSolidityValue(
-            "hex length must be even".to_string(),
-        ));
-    }
-
-    hex::decode(trimmed).map_err(|e| AppError::InvalidSolidityValue(format!("invalid hex: {e}")))
+    hex::decode(value).map_err(|e| AppError::InvalidSolidityValue(format!("invalid hex: {e}")))
 }
 
 /// Validate byte count matches expected size for type.
