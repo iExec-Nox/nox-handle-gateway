@@ -13,12 +13,13 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{debug, info, warn};
 
 use crate::config::Config;
-use crate::crypto::load_or_create_signer;
+use crate::crypto::load_signer;
 use crate::handlers;
 use crate::kms::KmsClient;
 use crate::repository::DataRepository;
 use crate::rpc::NoxClient;
 
+/// Shared application state injected into every Axum handler via [`State`].
 #[derive(Clone)]
 pub struct AppState {
     pub nox_client: NoxClient,
@@ -29,15 +30,21 @@ pub struct AppState {
     pub signer: PrivateKeySigner,
 }
 
+/// Top-level application builder and entry point.
+///
+/// Call [`Application::new`] with a loaded [`Config`], then [`Application::run`]
+/// to initialise all dependencies and start the HTTP server.
 pub struct Application {
     config: Config,
 }
 
 impl Application {
+    /// Creates a new application instance from the provided configuration.
     pub fn new(config: Config) -> Self {
         Self { config }
     }
 
+    /// Builds the Axum [`Router`] with all routes, middleware layers, and shared state.
     fn build_router(state: AppState, prometheus_layer: PrometheusMetricLayer<'static>) -> Router {
         debug!("Building application router");
 
@@ -66,8 +73,15 @@ impl Application {
             .layer(prometheus_layer)
     }
 
+    /// Initialises all dependencies and runs the HTTP server until a shutdown signal.
+    ///
+    /// Startup order:
+    /// 1. Load EIP-712 signer from `config.signer.wallet_key`
+    /// 2. Connect to NoxCompute on-chain, fetch the KMS public key
+    /// 3. Build [`KmsClient`] and validate the S3 bucket
+    /// 4. Bind the TCP listener and serve until `SIGTERM` / `Ctrl+C`
     pub async fn run(self) -> anyhow::Result<()> {
-        let signer = load_or_create_signer(&self.config.signer)?;
+        let signer = load_signer(&self.config.signer.wallet_key)?;
         info!("EIP-712 signer address: {}", signer.address());
 
         let nox_client: NoxClient = NoxClient::new(
@@ -81,7 +95,7 @@ impl Application {
             kms_public_key,
             self.config.kms.signer_address,
         )?;
-        let repository = DataRepository::new(&self.config.server.backend_url).await?;
+        let repository = DataRepository::new(&self.config.s3).await?;
 
         let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
         let state = AppState {
@@ -103,10 +117,12 @@ impl Application {
         Ok(())
     }
 
+    /// `GET /health` — returns `{"status":"ok"}`.
     async fn health_check() -> Json<Value> {
         Json(json!({"status": "ok"}))
     }
 
+    /// `GET /` — returns service name and current UTC timestamp.
     async fn root() -> Json<Value> {
         Json(json!({
             "service": "Handle Gateway",
@@ -114,10 +130,12 @@ impl Application {
         }))
     }
 
+    /// `GET /metrics` — renders Prometheus metrics as plain text.
     async fn metrics(State(state): State<AppState>) -> String {
         state.metrics_handle.render()
     }
 
+    /// Resolves when `SIGTERM` or `Ctrl+C` is received, triggering graceful shutdown.
     async fn shutdown_signal() {
         let ctrl_c = async {
             signal::ctrl_c()

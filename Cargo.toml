@@ -9,9 +9,11 @@ alloy-contract = "1.7.0"
 alloy-primitives = { version = "1.5.2", features = ["serde"] }
 alloy-provider = "1.7.0"
 alloy-signer = { version = "1.4.2", features = ["eip712"] }
-alloy-signer-local = { version = "1.5.2", features = ["keystore"] }
+alloy-signer-local = "1.5.2"
 alloy-sol-types = "1.5.2"
 anyhow = "1.0.100"
+aws-config = "1.8.13"
+aws-sdk-s3 = "1.122.0"
 axum = "0.8.8"
 axum-prometheus = "0.10.0"
 base64 = "0.22.1"
@@ -26,7 +28,6 @@ reqwest = { version = "0.13.1", features = ["json"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sha2 = "0.10.9"
-sqlx = { version = "0.8.6", features = ["chrono", "postgres", "runtime-tokio"] }
 thiserror = "2.0.17"
 tokio = { version = "1.49.0", features = ["full"] }
 tower-http = { version = "0.6.8", features = ["trace", "cors"] }

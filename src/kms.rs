@@ -6,14 +6,14 @@ use k256::PublicKey;
 use reqwest::{Client, header::AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use crate::types::{
     DelegateAuthorization, DelegateResponseProof, EIP_712_DOMAIN_VERSION,
     PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME,
 };
-use crate::utils::{serialize_bytes, strip_0x_prefix};
 
+/// Errors returned by [`KmsClient`] operations.
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Failed to build KMS HTTP client: {0}")]
@@ -39,6 +39,7 @@ impl From<reqwest::Error> for Error {
     }
 }
 
+/// Request body sent to `POST /v0/delegate` on the KMS.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct KmsDelegateRequestBody {
@@ -46,6 +47,7 @@ struct KmsDelegateRequestBody {
     target_pub_key: String,
 }
 
+/// Response body received from `POST /v0/delegate` on the KMS.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KmsDelegateResponse {
@@ -53,6 +55,10 @@ pub struct KmsDelegateResponse {
     pub proof: String,
 }
 
+/// HTTP client for the KMS `POST /v0/delegate` endpoint.
+///
+/// Holds the KMS EC public key (used for ECIES encryption) and the expected
+/// signer address (used to verify EIP-712 proofs on every delegate response).
 #[derive(Clone)]
 pub struct KmsClient {
     pub client: Client,
@@ -62,6 +68,11 @@ pub struct KmsClient {
 }
 
 impl KmsClient {
+    /// Creates a new KMS client.
+    ///
+    /// `public_key` is the KMS EC public key fetched on-chain from NoxCompute.
+    /// `kms_signer_address` is the Ethereum address whose EIP-712 signature must
+    /// appear on every delegate response.
     pub fn new(
         base_url: String,
         public_key: PublicKey,
@@ -83,6 +94,11 @@ impl KmsClient {
         })
     }
 
+    /// Calls `POST /v0/delegate` and returns the encrypted shared secret.
+    ///
+    /// Signs the request with an EIP-712 [`DelegateAuthorization`] and verifies
+    /// the KMS response carries a valid [`DelegateResponseProof`] from the
+    /// expected signer address.
     pub async fn get_encrypted_shared_secret(
         &self,
         ephemeral_pub_key: &str,
@@ -112,8 +128,14 @@ impl KmsClient {
             .header(AUTHORIZATION, format!("Bearer {authorization}"))
             .json(&request_body)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+
+        if let Err(err) = response.error_for_status_ref() {
+            let status = response.status();
+            let error_body = response.text().await?;
+            error!("KMS delegate error {status}: {error_body}");
+            return Err(Error::InvalidResponse(err.to_string()));
+        }
 
         let data = response
             .json::<KmsDelegateResponse>()
@@ -125,13 +147,16 @@ impl KmsClient {
         Ok(data.encrypted_shared_secret)
     }
 
+    /// Verifies the EIP-712 [`DelegateResponseProof`] in a KMS delegate response.
+    ///
+    /// Returns an error if the recovered signer does not match [`Self::kms_signer_address`].
     fn verify_delegate_response(
         &self,
         response: &KmsDelegateResponse,
         chain_id: u32,
     ) -> Result<(), Error> {
         let response_struct = DelegateResponseProof {
-            encryptedSharedSecret: strip_0x_prefix(&response.encrypted_shared_secret).to_string(),
+            encryptedSharedSecret: response.encrypted_shared_secret.clone(),
         };
 
         let domain = eip712_domain! {
@@ -142,7 +167,7 @@ impl KmsClient {
 
         let signing_hash = response_struct.eip712_signing_hash(&domain);
 
-        let signature_bytes = hex::decode(strip_0x_prefix(&response.proof))
+        let signature_bytes = hex::decode(&response.proof)
             .map_err(|e| Error::InvalidResponseSignature(format!("invalid hex: {e}")))?;
         let proof = Signature::from_raw(&signature_bytes)
             .map_err(|e| Error::InvalidResponseSignature(format!("invalid proof: {e}")))?;
@@ -161,6 +186,9 @@ impl KmsClient {
         Ok(())
     }
 
+    /// Builds and signs an EIP-712 [`DelegateAuthorization`] for a delegate request.
+    ///
+    /// Returns the hex-encoded signature to be sent as the `Authorization: Bearer` header.
     fn build_delegate_authorization(
         &self,
         ephemeral_pub_key: &str,
@@ -169,8 +197,8 @@ impl KmsClient {
         chain_id: u32,
     ) -> Result<String, Error> {
         let auth = DelegateAuthorization {
-            ephemeralPubKey: strip_0x_prefix(ephemeral_pub_key).to_string(),
-            targetPubKey: strip_0x_prefix(target_pub_key).to_string(),
+            ephemeralPubKey: ephemeral_pub_key.to_string(),
+            targetPubKey: target_pub_key.to_string(),
         };
 
         let domain = eip712_domain! {
@@ -183,6 +211,6 @@ impl KmsClient {
             .sign_typed_data_sync(&auth, &domain)
             .map_err(|e| Error::Signing(e.to_string()))?;
 
-        Ok(serialize_bytes(&signature.as_bytes()))
+        Ok(hex::encode_prefixed(signature.as_bytes()))
     }
 }

@@ -1,3 +1,17 @@
+//! Handle Gateway for the Nox Compute protocol.
+//!
+//! Accepts plaintext values from clients, encrypts them under the KMS public
+//! key via ECIES, stores the resulting ciphertexts in S3/MinIO under an
+//! immutable Object Lock policy, and issues EIP-712 [`HandleProof`]s for
+//! on-chain verification.
+//!
+//! Serving decryption requests requires a valid EIP-712
+//! [`DataAccessAuthorization`] signed by the handle owner, plus an on-chain
+//! ACL check against the NoxCompute contract.
+//!
+//! [`HandleProof`]: crate::types::HandleProof
+//! [`DataAccessAuthorization`]: crate::types::DataAccessAuthorization
+
 pub mod application;
 pub mod config;
 pub mod crypto;
@@ -7,7 +21,6 @@ pub mod kms;
 pub mod repository;
 pub mod rpc;
 pub mod types;
-pub mod utils;
 pub mod validation;
 
 use tracing::{debug, error};

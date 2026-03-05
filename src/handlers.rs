@@ -8,7 +8,7 @@ use axum::{
     http::header::HeaderMap,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use chrono::{NaiveDateTime, TimeZone, Utc};
+use chrono::{TimeZone, Utc};
 use futures::future::join_all;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,6 @@ use crate::error::AppError;
 use crate::kms::KmsClient;
 use crate::repository::HandleEntry;
 use crate::types::{DataAccessAuthorization, Handle, HandleProof, SolidityType};
-use crate::utils::{serialize_bytes, strip_0x_prefix};
 use crate::validation::decode_and_validate_value;
 
 // EIP-712 domain name for HandleProof generation
@@ -70,17 +69,16 @@ pub async fn create_handle(
 
     let handle = Handle::new(state.config.chain.id, request.solidity_type).to_bytes();
 
-    let serialized_handle = serialize_bytes(&handle);
+    let serialized_handle = hex::encode_prefixed(handle);
 
     let entry = HandleEntry {
         handle: serialized_handle.clone(),
-        ciphertext: serialize_bytes(&ecies_ciphertext.ciphertext),
-        public_key: serialize_bytes(&ecies_ciphertext.ephemeral_pubkey),
-        nonce: serialize_bytes(&ecies_ciphertext.nonce),
-        created_at: NaiveDateTime::default(),
+        ciphertext: hex::encode_prefixed(&ecies_ciphertext.ciphertext),
+        public_key: hex::encode_prefixed(ecies_ciphertext.ephemeral_pubkey),
+        nonce: hex::encode_prefixed(ecies_ciphertext.nonce),
     };
 
-    let new_handle = state.repository.create_handle(&entry).await?;
+    let created_at_dt = state.repository.create_handle(&entry).await?;
 
     // HandleProof
     let domain = eip712_domain! {
@@ -90,7 +88,7 @@ pub async fn create_handle(
         verifying_contract: state.config.chain.nox_compute_contract,
     };
 
-    let created_at = U256::from(new_handle.created_at.and_utc().timestamp());
+    let created_at = U256::from(created_at_dt.and_utc().timestamp());
     let proof = HandleProof {
         handle: B256::from(&handle),
         owner: request.owner,
@@ -139,8 +137,8 @@ pub async fn get_handle_crypto_material(
     };
     let payload = authorization.payload;
     let hash = payload.eip712_signing_hash(&domain);
-    let signature_bytes = hex::decode(strip_0x_prefix(&authorization.signature))
-        .map_err(|e| AppError::Unauthorized(e.to_string()))?;
+    let signature_bytes =
+        hex::decode(&authorization.signature).map_err(|e| AppError::Unauthorized(e.to_string()))?;
     let signature =
         Signature::from_raw(&signature_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
     let recovered_address = signature
@@ -171,8 +169,7 @@ pub async fn get_handle_crypto_material(
         ));
     }
 
-    let handle_raw =
-        hex::decode(strip_0x_prefix(&handle)).map_err(|e| AppError::BadRequest(e.to_string()))?;
+    let handle_raw = hex::decode(&handle).map_err(|e| AppError::BadRequest(e.to_string()))?;
     if handle_raw.len() != 32 {
         return Err(AppError::BadRequest("invalid handle".to_string()));
     }
