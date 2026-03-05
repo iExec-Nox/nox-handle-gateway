@@ -199,7 +199,7 @@ impl DataRepository {
         hasher.update(&data);
         let sha256 = format!("{:x}", hasher.finalize());
 
-        let request = self
+        let mut request = self
             .client
             .put_object()
             .bucket(&self.bucket)
@@ -212,14 +212,12 @@ impl DataRepository {
             .metadata("created-at", created_at.to_string())
             .metadata(METADATA_CONTENT_SHA256, sha256);
 
-        let request = if self.object_lock_enabled {
-            request
+        if self.object_lock_enabled {
+            request = request
                 .object_lock_mode(ObjectLockMode::Compliance)
                 .object_lock_retain_until_date(DateTime::from(
                     SystemTime::now() + Duration::from_secs(RETENTION_DURATION_SECS),
                 ))
-        } else {
-            request
         };
 
         let output = request.send().await.map_err(|err| {

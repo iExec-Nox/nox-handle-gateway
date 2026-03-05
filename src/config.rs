@@ -87,8 +87,8 @@ impl Config {
             .set_default("server.host", "0.0.0.0")?
             .set_default("server.port", 3000)?
             .set_default("s3.bucket", "handles")?
-            .set_default("s3.timeout", 30)?
             .set_default("s3.object_lock_enabled", true)?
+            .set_default("s3.timeout", 30)?
             .set_default("chain.id", 421614)?
             .set_default(
                 "chain.nox_compute_contract",
