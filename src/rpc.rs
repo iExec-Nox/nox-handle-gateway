@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, Bytes, FixedBytes};
 use alloy_provider::RootProvider;
 use alloy_sol_types::sol;
 use k256::PublicKey;
@@ -78,8 +78,6 @@ impl NoxClient {
         signature: &[u8],
         address: Address,
     ) -> Result<(), RpcError> {
-        use alloy_primitives::{Bytes, FixedBytes};
-
         const MAGIC_VALUE: FixedBytes<4> = FixedBytes([0x16, 0x26, 0xba, 0x7e]);
 
         let provider = self.contract.provider().clone();
@@ -89,8 +87,10 @@ impl NoxClient {
             .isValidSignature(hash, Bytes::from(signature.to_vec()))
             .call()
             .await
-            .map_err(|e| match e {
-                alloy_contract::Error::TransportError(_) => RpcError::CallFailure(e),
+            .map_err(|e| match &e {
+                alloy_contract::Error::TransportError(te) if te.is_transport_error() => {
+                    RpcError::CallFailure(e)
+                }
                 _ => RpcError::InvalidSignature,
             })?;
 
