@@ -29,12 +29,23 @@ pub struct ServerConfig {
 /// `access_key`, `secret_key`, and `region` have no defaults — the process
 /// exits at startup if they are not provided via environment variables or a
 /// config file.
+///
+/// `endpoint_url` is optional. When absent the AWS SDK uses standard regional
+/// endpoints (native AWS S3). When set, the SDK targets that custom endpoint
+/// and enables path-style addressing (required for MinIO and other S3-compatible
+/// backends).
+///
+/// `object_lock_enabled` controls whether Object Lock Compliance headers are
+/// written on each stored handle and whether the startup bucket check verifies
+/// that Object Lock is active. Set to `false` for buckets where Object Lock is
+/// not configured (e.g. the Sepolia S3 bucket).
 #[derive(Debug, Clone, Deserialize)]
 pub struct S3Config {
-    pub endpoint_url: String,
-    pub bucket: String,
     pub access_key: String,
     pub secret_key: String,
+    pub bucket: String,
+    pub endpoint_url: Option<String>,
+    pub object_lock_enabled: bool,
     pub region: String,
     pub timeout: u64,
 }
@@ -75,8 +86,8 @@ impl Config {
         let config = ConfigBuilder::builder()
             .set_default("server.host", "0.0.0.0")?
             .set_default("server.port", 3000)?
-            .set_default("s3.endpoint_url", "http://localhost:9900")?
             .set_default("s3.bucket", "handles")?
+            .set_default("s3.object_lock_enabled", true)?
             .set_default("s3.timeout", 30)?
             .set_default("chain.id", 421614)?
             .set_default(

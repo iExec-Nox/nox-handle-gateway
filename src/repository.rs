@@ -66,46 +66,69 @@ pub struct HandleEntry {
 pub struct DataRepository {
     client: Client,
     bucket: String,
+    object_lock_enabled: bool,
 }
 
 impl DataRepository {
     /// Builds the S3 client from config and validates the target bucket.
     ///
     /// Fails fast: returns an error (and the process exits) if the bucket is
-    /// unreachable or does not have S3 Object Lock enabled. Object Lock is
-    /// required because handles are immutable — once written they must not be
-    /// overwritten or deleted.
+    /// unreachable, or — when `object_lock_enabled` is `true` — if the bucket
+    /// does not have S3 Object Lock enabled. Object Lock is required in that
+    /// mode because handles are immutable.
+    ///
+    /// When `endpoint_url` is set, the client targets that custom endpoint with
+    /// path-style addressing (MinIO / S3-compatible backends). When absent, the
+    /// AWS SDK uses standard regional endpoints (native AWS S3).
     pub async fn new(config: &S3Config) -> anyhow::Result<Self> {
         let credentials =
             Credentials::new(&config.access_key, &config.secret_key, None, None, "static");
 
-        let aws_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        let mut aws_config_builder = aws_config::defaults(aws_config::BehaviorVersion::latest())
             .credentials_provider(credentials)
             .region(aws_config::Region::new(config.region.clone()))
-            .endpoint_url(&config.endpoint_url)
             .timeout_config(
                 TimeoutConfig::builder()
                     .operation_timeout(Duration::from_secs(config.timeout))
                     .build(),
-            )
-            .load()
-            .await;
+            );
 
-        let s3_config = Builder::from(&aws_config).force_path_style(true).build();
+        if let Some(ref url) = config.endpoint_url {
+            aws_config_builder = aws_config_builder.endpoint_url(url);
+        }
+
+        let aws_config = aws_config_builder.load().await;
+
+        let path_style = config.endpoint_url.is_some();
+        let s3_config = Builder::from(&aws_config)
+            .force_path_style(path_style)
+            .build();
 
         let repo = Self {
             client: Client::from_conf(s3_config),
             bucket: config.bucket.clone(),
+            object_lock_enabled: config.object_lock_enabled,
         };
 
         repo.validate_bucket().await?;
         Ok(repo)
     }
 
-    /// Verifies the bucket is accessible and has Object Lock enabled.
+    /// Verifies the bucket is accessible and that its Object Lock state matches
+    /// the configured `object_lock_enabled` flag.
     ///
-    /// Checks bucket existence via HEAD and confirms Object Lock is in Compliance
-    /// mode. Called once at startup; any failure aborts the process.
+    /// Always performs a HEAD check for bucket existence, then calls
+    /// `GetObjectLockConfiguration` to determine the actual bucket state. The
+    /// result is matched against the configured flag — both directions are
+    /// enforced:
+    ///
+    /// - `(enabled=true,  lock=false)` → error: Object Lock required but missing
+    /// - `(enabled=false, lock=true)`  → error: Object Lock present but not
+    ///   requested; update `object_lock_enabled` or reconfigure the bucket
+    /// - `(enabled=true,  lock=true)`  → info, proceed
+    /// - `(enabled=false, lock=false)` → info, proceed
+    ///
+    /// Called once at startup; any failure aborts the process.
     async fn validate_bucket(&self) -> anyhow::Result<()> {
         self.client
             .head_bucket()
@@ -141,28 +164,26 @@ impl DataRepository {
             Some(ObjectLockEnabled::Enabled)
         );
 
-        if !lock_enabled {
-            return Err(anyhow::anyhow!(
-                "S3 bucket '{}' does not have Object Lock enabled",
+        match (self.object_lock_enabled, lock_enabled) {
+            (true, false) => Err(anyhow::anyhow!(
+                "S3 bucket '{}': Object Lock requested but not configured",
                 self.bucket
-            ));
+            )),
+            (false, true) => Err(anyhow::anyhow!(
+                "S3 bucket '{}': Object Lock not requested but configured — set object_lock_enabled=true or use a different bucket",
+                self.bucket
+            )),
+            (true, true) => {
+                info!(bucket = %self.bucket, "running in Object Lock mode (handles are immutable)");
+                Ok(())
+            }
+            (false, false) => {
+                info!(bucket = %self.bucket, "running in non-locked mode (handles are not immutable)");
+                Ok(())
+            }
         }
-
-        Ok(())
     }
 
-    /// Stores a single handle entry in S3 under an If-None-Match guard.
-    ///
-    /// Records `created_at` as the current server time and writes it to the S3
-    /// object metadata under `"created-at"` for observability.
-    ///
-    /// Uses `If-None-Match: *` so the existence check and write are a single
-    /// atomic operation. A 412 response (key already exists) is mapped to
-    /// [`S3Error::AlreadyExists`]; all other errors become [`S3Error::S3Operation`].
-    ///
-    /// Objects are written with S3 Object Lock Compliance mode and a 100-year
-    /// retention period, making them immutable for the lifetime of the system.
-    ///
     /// # Retry note
     ///
     /// If the network drops after S3 has durably written the object but before
@@ -181,7 +202,7 @@ impl DataRepository {
         hasher.update(&data);
         let sha256 = format!("{:x}", hasher.finalize());
 
-        let request = self
+        let mut request = self
             .client
             .put_object()
             .bucket(&self.bucket)
@@ -189,14 +210,18 @@ impl DataRepository {
             .body(data.into())
             .content_type("application/octet-stream")
             .if_none_match("*")
-            .object_lock_mode(ObjectLockMode::Compliance)
-            .object_lock_retain_until_date(DateTime::from(
-                SystemTime::now() + Duration::from_secs(RETENTION_DURATION_SECS),
-            ))
             .checksum_algorithm(ChecksumAlgorithm::Crc64Nvme)
             .metadata("handle", &entry.handle)
             .metadata("created-at", created_at.to_string())
             .metadata(METADATA_CONTENT_SHA256, sha256);
+
+        if self.object_lock_enabled {
+            request = request
+                .object_lock_mode(ObjectLockMode::Compliance)
+                .object_lock_retain_until_date(DateTime::from(
+                    SystemTime::now() + Duration::from_secs(RETENTION_DURATION_SECS),
+                ))
+        };
 
         let output = request.send().await.map_err(|err| {
             if let SdkError::ServiceError(ref service_err) = err

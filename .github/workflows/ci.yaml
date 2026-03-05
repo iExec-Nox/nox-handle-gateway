@@ -50,7 +50,7 @@ jobs:
   build-oci-image:
     name: Build OCI image
     needs: prepare
-    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build.yml@docker-build-v3.0.0
+    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build.yml@docker-build-v3.1.2
     with:
       image-name: docker-regis.iex.ec/nox-handle-gateway
       image-tag: ${{ needs.prepare.outputs.image_tag }}
