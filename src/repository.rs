@@ -143,26 +143,30 @@ impl DataRepository {
                 )
             })?;
 
-        let lock_response = self
+        let lock_enabled = match self
             .client
             .get_object_lock_configuration()
             .bucket(&self.bucket)
             .send()
             .await
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "S3 bucket '{}' does not have Object Lock configured: {}",
+        {
+            Ok(value) => {
+                matches!(
+                    value
+                        .object_lock_configuration()
+                        .and_then(|c| c.object_lock_enabled()),
+                    Some(ObjectLockEnabled::Enabled)
+                )
+            }
+            Err(e) => {
+                warn!(
+                    "S3 bucket {} does not have Object Lock configured: {}",
                     self.bucket,
                     e.into_service_error()
-                )
-            })?;
-
-        let lock_enabled = matches!(
-            lock_response
-                .object_lock_configuration()
-                .and_then(|c| c.object_lock_enabled()),
-            Some(ObjectLockEnabled::Enabled)
-        );
+                );
+                false
+            }
+        };
 
         match (self.object_lock_enabled, lock_enabled) {
             (true, false) => Err(anyhow::anyhow!(
