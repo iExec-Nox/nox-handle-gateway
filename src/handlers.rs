@@ -111,6 +111,15 @@ pub async fn create_handle(
     }))
 }
 
+/// Serve encrypted crypto material for a handle after verifying caller identity and ACL.
+///
+/// Decodes the `Authorization: EIP712 <base64>` header and recovers the signer
+/// address from the EIP-712 signature. For EOA callers the recovered address
+/// must match `userAddress`; for Smart Account callers an ERC-1271 fallback is
+/// attempted by calling `isValidSignature` on the contract at `userAddress`.
+/// After identity verification, the token's `notBefore`/`expiresAt` window is
+/// enforced and `isViewer` is checked on-chain. On success the stored
+/// ciphertext and a KMS-delegated re-encrypted shared secret are returned.
 pub async fn get_handle_crypto_material(
     Path(handle): Path<String>,
     State(state): State<AppState>,
