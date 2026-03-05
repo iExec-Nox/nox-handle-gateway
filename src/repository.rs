@@ -114,12 +114,21 @@ impl DataRepository {
         Ok(repo)
     }
 
-    /// Verifies the bucket is accessible and, when Object Lock is required, that
-    /// it is enabled.
+    /// Verifies the bucket is accessible and that its Object Lock state matches
+    /// the configured `object_lock_enabled` flag.
     ///
-    /// Always performs a HEAD check for bucket existence. When `object_lock_enabled`
-    /// is `true`, also calls `GetObjectLockConfiguration` and aborts if Object Lock
-    /// is not active. Called once at startup; any failure aborts the process.
+    /// Always performs a HEAD check for bucket existence, then calls
+    /// `GetObjectLockConfiguration` to determine the actual bucket state. The
+    /// result is matched against the configured flag — both directions are
+    /// enforced:
+    ///
+    /// - `(enabled=true,  lock=false)` → error: Object Lock required but missing
+    /// - `(enabled=false, lock=true)`  → error: Object Lock present but not
+    ///   requested; update `object_lock_enabled` or reconfigure the bucket
+    /// - `(enabled=true,  lock=true)`  → info, proceed
+    /// - `(enabled=false, lock=false)` → info, proceed
+    ///
+    /// Called once at startup; any failure aborts the process.
     async fn validate_bucket(&self) -> anyhow::Result<()> {
         self.client
             .head_bucket()
@@ -134,53 +143,47 @@ impl DataRepository {
                 )
             })?;
 
-        if self.object_lock_enabled {
-            let lock_response = self
-                .client
-                .get_object_lock_configuration()
-                .bucket(&self.bucket)
-                .send()
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "S3 bucket '{}' does not have Object Lock configured: {}",
-                        self.bucket,
-                        e.into_service_error()
-                    )
-                })?;
+        let lock_response = self
+            .client
+            .get_object_lock_configuration()
+            .bucket(&self.bucket)
+            .send()
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "S3 bucket '{}' does not have Object Lock configured: {}",
+                    self.bucket,
+                    e.into_service_error()
+                )
+            })?;
 
-            let lock_enabled = matches!(
-                lock_response
-                    .object_lock_configuration()
-                    .and_then(|c| c.object_lock_enabled()),
-                Some(ObjectLockEnabled::Enabled)
-            );
+        let lock_enabled = matches!(
+            lock_response
+                .object_lock_configuration()
+                .and_then(|c| c.object_lock_enabled()),
+            Some(ObjectLockEnabled::Enabled)
+        );
 
-            if !lock_enabled {
-                return Err(anyhow::anyhow!(
-                    "S3 bucket '{}' does not have Object Lock enabled",
-                    self.bucket
-                ));
+        match (self.object_lock_enabled, lock_enabled) {
+            (true, false) => Err(anyhow::anyhow!(
+                "S3 bucket '{}': Object Lock requested but not configured",
+                self.bucket
+            )),
+            (false, true) => Err(anyhow::anyhow!(
+                "S3 bucket '{}': Object Lock not requested but configured — set object_lock_enabled=true or use a different bucket",
+                self.bucket
+            )),
+            (true, true) => {
+                info!(bucket = %self.bucket, "running in Object Lock mode (handles are immutable)");
+                Ok(())
+            }
+            (false, false) => {
+                info!(bucket = %self.bucket, "running in non-locked mode (handles are not immutable)");
+                Ok(())
             }
         }
-
-        Ok(())
     }
 
-    /// Stores a single handle entry in S3 under an If-None-Match guard.
-    ///
-    /// Records `created_at` as the current server time and writes it to the S3
-    /// object metadata under `"created-at"` for observability.
-    ///
-    /// Uses `If-None-Match: *` so the existence check and write are a single
-    /// atomic operation. A 412 response (key already exists) is mapped to
-    /// [`S3Error::AlreadyExists`]; all other errors become [`S3Error::S3Operation`].
-    ///
-    /// When `object_lock_enabled` is `true`, objects are written with S3 Object
-    /// Lock Compliance mode and a 100-year retention period, making them immutable.
-    /// When `false`, no lock headers are sent (for buckets where Object Lock is
-    /// not configured).
-    ///
     /// # Retry note
     ///
     /// If the network drops after S3 has durably written the object but before

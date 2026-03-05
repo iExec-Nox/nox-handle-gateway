@@ -42,11 +42,11 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct S3Config {
     pub access_key: String,
+    pub secret_key: String,
     pub bucket: String,
     pub endpoint_url: Option<String>,
     pub object_lock_enabled: bool,
     pub region: String,
-    pub secret_key: String,
     pub timeout: u64,
 }
 
