@@ -113,13 +113,13 @@ pub async fn create_handle(
 
 /// Serve encrypted crypto material for a handle after verifying caller identity and ACL.
 ///
-/// Decodes the `Authorization: EIP712 <base64>` header and recovers the signer
-/// address from the EIP-712 signature. For EOA callers the recovered address
-/// must match `userAddress`; for Smart Account callers an ERC-1271 fallback is
-/// attempted by calling `isValidSignature` on the contract at `userAddress`.
-/// After identity verification, the token's `notBefore`/`expiresAt` window is
-/// enforced and `isViewer` is checked on-chain. On success the stored
-/// ciphertext and a KMS-delegated re-encrypted shared secret are returned.
+/// Decodes the `Authorization: EIP712 <base64>` header and enforces the token's
+/// `notBefore`/`expiresAt` window first to avoid unnecessary cryptographic work
+/// on expired tokens. Then recovers the signer address from the EIP-712 signature;
+/// for EOA callers the recovered address must match `userAddress`, for Smart Account
+/// callers an ERC-1271 fallback is attempted by calling `isValidSignature` on the
+/// contract at `userAddress`. Finally `isViewer` is checked on-chain and the stored
+/// ciphertext with a KMS-delegated re-encrypted shared secret are returned.
 pub async fn get_handle_crypto_material(
     Path(handle): Path<String>,
     State(state): State<AppState>,
@@ -138,13 +138,26 @@ pub async fn get_handle_crypto_material(
     let authorization: GatewayDelegateAuthorization =
         serde_json::from_slice(&token_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
 
+    let payload = authorization.payload;
+
+    let now = U256::from(Utc::now().timestamp());
+    if now < payload.notBefore || payload.expiresAt <= now {
+        warn!(
+            not_before = format_timestamp(payload.notBefore),
+            expires_at = format_timestamp(payload.expiresAt),
+            "token is not active or expired",
+        );
+        return Err(AppError::Unauthorized(
+            "token is not active or expired".to_string(),
+        ));
+    }
+
     let domain = eip712_domain! {
         name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(state.config.chain.id),
         verifying_contract: state.config.chain.nox_compute_contract,
     };
-    let payload = authorization.payload;
     let hash = payload.eip712_signing_hash(&domain);
     let signature_bytes =
         hex::decode(&authorization.signature).map_err(|e| AppError::Unauthorized(e.to_string()))?;
@@ -164,18 +177,6 @@ pub async fn get_handle_crypto_material(
             .nox_client
             .verify_erc1271(hash, &signature_bytes, payload.userAddress)
             .await?;
-    }
-
-    let now = U256::from(Utc::now().timestamp());
-    if now < payload.notBefore || payload.expiresAt <= now {
-        warn!(
-            not_before = format_timestamp(payload.notBefore),
-            expires_at = format_timestamp(payload.expiresAt),
-            "token is not active or expired",
-        );
-        return Err(AppError::Unauthorized(
-            "token is not active or expired".to_string(),
-        ));
     }
 
     let handle_raw = hex::decode(&handle).map_err(|e| AppError::BadRequest(e.to_string()))?;

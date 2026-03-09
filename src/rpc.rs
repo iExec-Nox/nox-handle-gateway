@@ -25,7 +25,7 @@ sol! {
 pub enum RpcError {
     #[error("Access denied: not a viewer")]
     AccessDenied,
-    #[error("RPC call failed: {0}")]
+    #[error(transparent)]
     CallFailure(#[from] alloy_contract::Error),
     #[error("ERC-1271: invalid signature")]
     InvalidSignature,
@@ -99,10 +99,9 @@ impl NoxClient {
     /// Calls `isValidSignature(hash, signature)` on the contract deployed at
     /// `address`. Returns `Ok(())` if the contract returns the ERC-1271 magic
     /// value (`0x1626ba7e`). Returns [`RpcError::InvalidSignature`] if the
-    /// contract returns any other value or reverts. Returns
-    /// [`RpcError::CallFailure`] only for genuine network-level transport
-    /// failures — contract execution errors (reverts, wrong return value) are
-    /// always treated as signature failures, not infrastructure errors.
+    /// contract returns any other value. Returns [`RpcError::CallFailure`] if
+    /// the call fails at the transport level or if the contract reverts — per
+    /// EIP-1271, a revert indicates a call failure, not an invalid signature.
     pub async fn verify_erc1271(
         &self,
         hash: B256,
@@ -119,9 +118,7 @@ impl NoxClient {
             .call()
             .await
             .map_err(|e| match &e {
-                alloy_contract::Error::TransportError(te) if te.is_transport_error() => {
-                    RpcError::CallFailure(e)
-                }
+                alloy_contract::Error::TransportError(_) => RpcError::CallFailure(e),
                 _ => RpcError::InvalidSignature,
             })?;
 
