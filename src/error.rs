@@ -13,8 +13,6 @@ use crate::rpc;
 
 #[derive(Debug, Error)]
 pub enum AppError {
-    #[error("RPC error: {0}")]
-    RpcError(#[from] rpc::RpcError),
     #[error("Bad request: {0}")]
     BadRequest(String),
     #[error("Cryptographic error: {0}")]
@@ -27,6 +25,8 @@ pub enum AppError {
     KmsError(#[from] kms::Error),
     #[error("Operands not prepared for computation")]
     OperandsNotPrepared,
+    #[error("RPC error: {0}")]
+    RpcError(#[from] rpc::RpcError),
     #[error("Signing error: {0}")]
     SigningError(String),
     #[error("Storage error: {0}")]
@@ -38,13 +38,13 @@ pub enum AppError {
 impl AppError {
     fn error_code(&self) -> &'static str {
         match self {
-            AppError::RpcError(_) => "rpc",
             AppError::BadRequest(_) => "bad_request",
             AppError::CryptoError(_) => "crypto",
             AppError::InvalidSolidityType(_) => "invalid_type",
             AppError::InvalidSolidityValue(_) => "invalid_value",
             AppError::KmsError(_) => "kms",
             AppError::OperandsNotPrepared => "operands",
+            AppError::RpcError(_) => "rpc",
             AppError::SigningError(_) => "signing",
             AppError::StorageError(_) => "storage",
             AppError::Unauthorized(_) => "unauthorized",
@@ -53,10 +53,6 @@ impl AppError {
 
     fn status_code(&self) -> StatusCode {
         match self {
-            AppError::RpcError(e) => match e {
-                rpc::RpcError::AccessDenied => StatusCode::FORBIDDEN,
-                _ => StatusCode::SERVICE_UNAVAILABLE,
-            },
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::CryptoError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::InvalidSolidityType(_) => StatusCode::BAD_REQUEST,
@@ -67,6 +63,12 @@ impl AppError {
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             AppError::OperandsNotPrepared => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::RpcError(e) => match e {
+                rpc::RpcError::AccessDenied => StatusCode::FORBIDDEN,
+                rpc::RpcError::InvalidSignature(_)
+                | rpc::RpcError::SmartWalletSignatureNotVerified(_) => StatusCode::UNAUTHORIZED,
+                _ => StatusCode::SERVICE_UNAVAILABLE,
+            },
             AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::StorageError(e) => match e {
                 repository::S3Error::NotFound { .. } => StatusCode::NOT_FOUND,
