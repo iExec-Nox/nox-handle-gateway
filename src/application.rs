@@ -49,16 +49,25 @@ impl Application {
     fn build_router(state: AppState, prometheus_layer: PrometheusMetricLayer<'static>) -> Router {
         debug!("Building application router");
 
+        let allowed_headers: Vec<HeaderName> = state
+            .config
+            .server
+            .cors_allowed_headers
+            .iter()
+            .filter_map(|h| {
+                HeaderName::from_bytes(h.as_bytes())
+                    .map_err(|_| warn!("Ignoring invalid CORS header name: {h}"))
+                    .ok()
+            })
+            .collect();
+
         let cors = CorsLayer::new()
             .allow_methods([
                 axum::http::Method::GET,
                 axum::http::Method::POST,
                 axum::http::Method::OPTIONS,
             ])
-            .allow_headers([
-                HeaderName::from_static("content-type"),
-                HeaderName::from_static("authorization"),
-            ])
+            .allow_headers(allowed_headers)
             .allow_origin(tower_http::cors::Any);
 
         Router::new()
