@@ -26,13 +26,15 @@ pub enum RpcError {
     #[error("Access denied: not a viewer")]
     AccessDenied,
     #[error(transparent)]
-    CallFailure(#[from] alloy_contract::Error),
+    CallFailure(alloy_contract::Error),
     #[error("ERC-1271: invalid signature")]
     InvalidSignature,
     #[error("Invalid KMS public key: {0}")]
     InvalidKey(String),
     #[error("RPC provider error: {0}")]
     ProviderError(String),
+    #[error(transparent)]
+    SmartWalletSignatureNotVerified(alloy_contract::Error),
 }
 
 /// Ethereum RPC client for on-chain reads against the NoxCompute contract.
@@ -99,9 +101,12 @@ impl NoxClient {
     /// Calls `isValidSignature(hash, signature)` on the contract deployed at
     /// `address`. Returns `Ok(())` if the contract returns the ERC-1271 magic
     /// value (`0x1626ba7e`). Returns [`RpcError::InvalidSignature`] if the
-    /// contract returns any other value. Returns [`RpcError::CallFailure`] if
-    /// the call fails at the transport level or if the contract reverts — per
-    /// EIP-1271, a revert indicates a call failure, not an invalid signature.
+    /// contract returns any other value. Returns
+    /// [`RpcError::SmartWalletSignatureNotVerified`] if the call itself fails
+    /// for any reason (transport error, revert, ABI mismatch, contract not
+    /// deployed, …), forwarding the raw alloy error transparently so no
+    /// information is lost. This catch-all is intentional — error patterns will
+    /// be refined into dedicated variants once observed in production.
     pub async fn verify_erc1271(
         &self,
         hash: B256,
@@ -117,10 +122,7 @@ impl NoxClient {
             .isValidSignature(hash, Bytes::from(signature.to_vec()))
             .call()
             .await
-            .map_err(|e| match &e {
-                alloy_contract::Error::TransportError(_) => RpcError::CallFailure(e),
-                _ => RpcError::InvalidSignature,
-            })?;
+            .map_err(RpcError::SmartWalletSignatureNotVerified)?;
 
         if result == MAGIC_VALUE {
             Ok(())

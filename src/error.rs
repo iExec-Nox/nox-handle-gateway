@@ -55,7 +55,8 @@ impl AppError {
         match self {
             AppError::RpcError(e) => match e {
                 rpc::RpcError::AccessDenied => StatusCode::FORBIDDEN,
-                rpc::RpcError::InvalidSignature => StatusCode::UNAUTHORIZED,
+                rpc::RpcError::InvalidSignature
+                | rpc::RpcError::SmartWalletSignatureNotVerified(_) => StatusCode::UNAUTHORIZED,
                 _ => StatusCode::SERVICE_UNAVAILABLE,
             },
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
