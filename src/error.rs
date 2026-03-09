@@ -65,7 +65,7 @@ impl AppError {
             AppError::OperandsNotPrepared => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::RpcError(e) => match e {
                 rpc::RpcError::AccessDenied => StatusCode::FORBIDDEN,
-                rpc::RpcError::InvalidSignature
+                rpc::RpcError::InvalidSignature(_)
                 | rpc::RpcError::SmartWalletSignatureNotVerified(_) => StatusCode::UNAUTHORIZED,
                 _ => StatusCode::SERVICE_UNAVAILABLE,
             },

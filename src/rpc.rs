@@ -27,10 +27,10 @@ pub enum RpcError {
     AccessDenied,
     #[error(transparent)]
     CallFailure(alloy_contract::Error),
-    #[error("ERC-1271: invalid signature")]
-    InvalidSignature,
     #[error("Invalid KMS public key: {0}")]
     InvalidKey(String),
+    #[error("ERC-1271: invalid signature (returned {0})")]
+    InvalidSignature(FixedBytes<4>),
     #[error("RPC provider error: {0}")]
     ProviderError(String),
     #[error(transparent)]
@@ -127,7 +127,7 @@ impl NoxClient {
         if result == MAGIC_VALUE {
             Ok(())
         } else {
-            Err(RpcError::InvalidSignature)
+            Err(RpcError::InvalidSignature(result))
         }
     }
 }
