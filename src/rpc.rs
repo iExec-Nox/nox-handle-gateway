@@ -15,7 +15,7 @@ sol! {
     /// ERC-1271 standard interface for Smart Account signature verification.
     #[sol(rpc)]
     interface IERC1271 {
-        function isValidSignature(bytes32 hash, bytes calldata signature)
+        function isValidSignature(bytes32 hash, bytes memory signature)
             external view returns (bytes4);
     }
 }
