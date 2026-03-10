@@ -1,3 +1,9 @@
+//! Handlers implementations for Handle Gateway REST endpoints.
+//!
+//! The handlers implement interactions for users or runners.
+//! User interactions, specifically the access to encrypted data
+//! held by a handle are verified against on-chain ACL.
+
 use alloy_primitives::{Address, B256, U256, hex};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
@@ -22,9 +28,9 @@ use crate::repository::HandleEntry;
 use crate::types::{DataAccessAuthorization, Handle, HandleProof, SolidityType};
 use crate::validation::decode_and_validate_value;
 
-// EIP-712 domain name for HandleProof generation
+/// EIP-712 domain name for HandleProof generation.
 const NOX_COMPUTE_EIP712_DOMAIN_NAME: &str = "NoxCompute";
-// EIP-712 domain name for DataAccessAuthorization validation
+/// EIP-712 domain name for DataAccessAuthorization validation.
 const HANDLE_GATEWAY_EIP712_DOMAIN_NAME: &str = "Handle Gateway";
 
 #[derive(Debug, Deserialize)]
@@ -246,6 +252,14 @@ pub struct NoxComputeResult {
     signature: String,
 }
 
+/// Retrieves from S3 Handles required as operands by a Runner to perform a computation.
+///
+/// # Errors
+///
+/// The operation will fail with:
+/// - [`AppError::Unauthorized`] if the authorization token cannot be verified.
+/// - [`AppError::BadRequest`] if not all operands can be delivered to the Runner,
+///   either due to an operand not retrieved from S3 or not prepared through the KMS.
 pub async fn get_operand_handles(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -357,6 +371,13 @@ async fn get_crypto_material_for_entry(
     })
 }
 
+/// Receives Handles generating by a Runner computation and publishes them to S3.
+///
+/// # Errors
+///
+/// The operation fill fail with:
+/// - [`AppError::Unauthorized`] if the authorization token cannot be verified.
+/// - [`super::repository::S3Error`] if an error occurs during publishing.
 pub async fn publish_results(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -392,6 +413,15 @@ pub async fn publish_results(
     Ok(())
 }
 
+/// Extracts authorization token from headers.
+///
+/// # Errors
+///
+/// The method will return [`AppError::Unauthorized`] in the following situations:
+/// - no header was found.
+/// - the header value could not be parsed to a String value.
+/// - the header is malformed and does not start with the right prefix.
+/// - the header value following the `EIP712 ` prefix is not base64 encoded.
 fn extract_authorization(headers: HeaderMap) -> Result<Vec<u8>, AppError> {
     let token = headers
         .get(header::AUTHORIZATION)
@@ -407,6 +437,15 @@ fn extract_authorization(headers: HeaderMap) -> Result<Vec<u8>, AppError> {
         .map_err(|e| AppError::Unauthorized(e.to_string()))
 }
 
+/// Recovers the address used to sign an authorization token and verifies it against an expected address.
+///
+/// # Errors
+///
+/// The method will return [`AppError::Unauthorized`] in the following situations:
+/// - The `signature`` is not encoded as a valid hex value.
+/// - The signature bytes can not be converted to a `Signature`.
+/// - No address can be recovered from the provided `hash`.
+/// - There is a mismatch between the recovered address and the expected one.
 fn recover_and_check_address(
     expected_address: &Address,
     hash: &B256,
