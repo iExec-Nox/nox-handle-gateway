@@ -18,24 +18,10 @@ pub struct Config {
 }
 
 /// HTTP server bind configuration.
-///
-/// `cors_allowed_headers` lists the request headers the browser is permitted to
-/// send cross-origin (`Access-Control-Allow-Headers`). The default covers the
-/// two headers used by this API: `content-type` (JSON bodies) and `authorization`
-/// (EIP-712 token). Extend via `NOX_HANDLE_GATEWAY_SERVER__CORS_ALLOWED_HEADERS`
-/// as a JSON array.
-///
-/// Each entry is validated at startup with [`http::header::HeaderName::from_bytes`],
-/// which enforces HTTP token syntax (RFC 7230: no control characters, no separators
-/// such as `:` or `/`). This catches malformed values but **not** typos — a value
-/// like `"authoriation"` is a valid HTTP token and will be accepted silently. If a
-/// critical header is accidentally omitted or misspelled, browsers will reject
-/// cross-origin requests for that header at the CORS preflight stage.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
-    pub cors_allowed_headers: Vec<String>,
 }
 
 /// S3/MinIO connection configuration.
@@ -100,10 +86,6 @@ impl Config {
         let config = ConfigBuilder::builder()
             .set_default("server.host", "0.0.0.0")?
             .set_default("server.port", 3000)?
-            .set_default(
-                "server.cors_allowed_headers",
-                vec!["content-type", "authorization"],
-            )?
             .set_default("s3.bucket", "handles")?
             .set_default("s3.object_lock_enabled", true)?
             .set_default("s3.timeout", 30)?
@@ -122,8 +104,7 @@ impl Config {
             .add_source(
                 Environment::with_prefix("NOX_HANDLE_GATEWAY")
                     .prefix_separator("_")
-                    .separator("__")
-                    .try_parsing(true),
+                    .separator("__"),
             )
             .add_source(EnvironmentSecretFile::with_prefix("NOX_HANDLE_GATEWAY").separator("_"))
             .build()?;
