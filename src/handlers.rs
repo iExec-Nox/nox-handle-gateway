@@ -1,7 +1,13 @@
+//! Handlers implementations for Handle Gateway REST endpoints.
+//!
+//! The handlers implement interactions for users or runners.
+//! User interactions, specifically the access to encrypted data
+//! held by a handle are verified against on-chain ACL.
+
 use alloy_primitives::{Address, B256, U256, hex};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{SolStruct, eip712_domain};
+use alloy_sol_types::{SolStruct, eip712_domain, sol};
 use axum::{
     Json,
     extract::{Path, State},
@@ -22,9 +28,9 @@ use crate::repository::HandleEntry;
 use crate::types::{DataAccessAuthorization, Handle, HandleProof, SolidityType};
 use crate::validation::decode_and_validate_value;
 
-// EIP-712 domain name for HandleProof generation
+/// EIP-712 domain name for HandleProof generation.
 const NOX_COMPUTE_EIP712_DOMAIN_NAME: &str = "NoxCompute";
-// EIP-712 domain name for DataAccessAuthorization validation
+/// EIP-712 domain name for DataAccessAuthorization validation.
 const HANDLE_GATEWAY_EIP712_DOMAIN_NAME: &str = "Handle Gateway";
 
 #[derive(Debug, Deserialize)]
@@ -125,16 +131,8 @@ pub async fn get_handle_crypto_material(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<GatewayDelegateResponse>, AppError> {
-    info!("get_handle_crypto_material query for handle {}", handle);
-    let token = headers
-        .get(header::AUTHORIZATION)
-        .ok_or(AppError::Unauthorized("header missing".to_string()))?
-        .to_str()
-        .map_err(|e| AppError::Unauthorized(e.to_string()))?
-        .trim_start_matches("EIP712 ");
-    let token_bytes = STANDARD
-        .decode(token)
-        .map_err(|e| AppError::Unauthorized(e.to_string()))?;
+    info!(handle = handle, "get_handle_crypto_material query");
+    let token_bytes = extract_authorization(headers)?;
     let authorization: GatewayDelegateAuthorization =
         serde_json::from_slice(&token_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
 
@@ -220,56 +218,103 @@ fn format_timestamp(ts: U256) -> String {
         .unwrap_or_else(|| format!("invalid({ts})"))
 }
 
+sol! {
+    /// EIP-712 compatible payload to authorize a Runner to retrieve operands from the Handle Gateway.
+    #[derive(Deserialize)]
+    struct OperandAccessAuthorization {
+        address caller;
+        string[] operands;
+        string rsaPublicKey;
+        string transactionHash;
+    }
+
+    /// EIP-712 compatible payload to authorize a Runner to publish results to the Handle Gateway.
+    #[derive(Deserialize)]
+    struct ResultPublishingAuthorization {
+        uint256 chainId;
+        uint256 blockNumber;
+        address caller;
+        string transactionHash;
+    }
+}
+
+/// Full authorization data to retrieve compute operands from the Handle Gateway.
+///
+/// It contains the plain [`OperandAccessAuthorization`] EIP-712 data with its signed hash.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NoxComputeRequest {
-    caller: Address,
-    rsa_public_key: String,
-    operands: Vec<String>,
-    results: Vec<String>,
+    payload: OperandAccessAuthorization,
+    signature: String,
 }
 
+/// Full authorization data to publish compute results to the Handle Gateway.
+///
+/// It contains the plain [`ResultPublishingAuthorization`] EIP-712 data with its signed hash.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoxComputeResult {
+    payload: ResultPublishingAuthorization,
+    signature: String,
+}
+
+/// Retrieves from S3 Handles required as operands by a Runner to perform a computation.
+///
+/// # Errors
+///
+/// The operation will fail with:
+/// - [`AppError::Unauthorized`] if the authorization token cannot be verified.
+/// - [`AppError::BadRequest`] if not all operands can be delivered to the Runner,
+///   either due to an operand not retrieved from S3 or not prepared through the KMS.
 pub async fn get_operand_handles(
     State(state): State<AppState>,
-    Json(compute_request): Json<NoxComputeRequest>,
+    headers: HeaderMap,
 ) -> Result<Json<Vec<GatewayDelegateResponse>>, AppError> {
-    // TODO check caller has permissions
+    let token_bytes = extract_authorization(headers)?;
+    let authorization: NoxComputeRequest =
+        serde_json::from_slice(&token_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
+
+    let domain = eip712_domain! {
+        name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
+        version: "1",
+        chain_id: u64::from(state.config.chain.id),
+    };
+    let compute_request = authorization.payload;
+    let hash = compute_request.eip712_signing_hash(&domain);
+    recover_and_check_address(
+        &state.config.runner_address,
+        &hash,
+        &authorization.signature,
+    )?;
+
     debug!("preparing handles for caller {}", compute_request.caller);
 
-    let mut conflicting_result_handles = false;
-    let result_handles: Vec<HandleEntry> = state
-        .repository
-        .read_handles(&compute_request.results)
-        .await?;
-    debug!("result handles count {}", result_handles.len());
-    if !result_handles.is_empty() {
-        let unexpected_handles: Vec<String> = result_handles
-            .iter()
-            .map(|entry| entry.handle.clone())
-            .collect();
-        error!("unexpected result handles found in handle database {unexpected_handles:?}");
-        conflicting_result_handles = true;
-    }
+    let operands_expected_count = compute_request.operands.len();
 
-    let mut missing_operand_handles = false;
     let operand_handles: Vec<HandleEntry> = state
         .repository
         .read_handles(&compute_request.operands)
         .await?;
     debug!("operand handles count {}", operand_handles.len());
-    if operand_handles.len() != compute_request.operands.len() {
-        let missing_handles: Vec<String> = operand_handles
+    if operand_handles.len() != operands_expected_count {
+        let found_handles: Vec<String> = operand_handles
             .iter()
             .map(|entry| entry.handle.clone())
-            .filter(|handle| !compute_request.operands.contains(handle))
             .collect();
-        error!("expected operand handles not found in handle database {missing_handles:?}");
-        missing_operand_handles = true;
-    }
-    if conflicting_result_handles || missing_operand_handles {
-        return Err(AppError::BadRequest(format!(
-            "impossible to perform computation [conflicting_result_handles:{conflicting_result_handles}, missing_operand_handles:{missing_operand_handles}]"
-        )));
+        let missing_handles: Vec<String> = compute_request
+            .operands
+            .into_iter()
+            .filter(|handle| !found_handles.contains(handle))
+            .collect();
+        error!(
+            transaction_hash = compute_request.transactionHash,
+            requested = operands_expected_count,
+            fetched = operand_handles.len(),
+            "expected operand handles not found in handle database {missing_handles:?}"
+        );
+        return Err(AppError::BadRequest(
+            "impossible to perform computation, missing operand handles".to_string(),
+        ));
     }
 
     let operands_crypto_material: Vec<GatewayDelegateResponse> =
@@ -277,7 +322,7 @@ pub async fn get_operand_handles(
             get_crypto_material_for_entry(
                 state.kms_client.clone(),
                 entry,
-                &compute_request.rsa_public_key,
+                &compute_request.rsaPublicKey,
                 &state.signer,
                 state.config.chain.id,
             )
@@ -286,13 +331,22 @@ pub async fn get_operand_handles(
         .into_iter()
         .filter_map(Result::ok)
         .collect();
-    if operands_crypto_material.len() != compute_request.operands.len() {
-        let missing_handles: Vec<String> = operands_crypto_material
+    if operands_crypto_material.len() != operands_expected_count {
+        let found_handles: Vec<String> = operands_crypto_material
             .iter()
             .map(|crypto_material| crypto_material.handle.clone())
-            .filter(|handle| !compute_request.operands.contains(handle))
             .collect();
-        error!("expected operand handles not prepared {missing_handles:?}");
+        let missing_handles: Vec<String> = compute_request
+            .operands
+            .into_iter()
+            .filter(|handle| !found_handles.contains(handle))
+            .collect();
+        error!(
+            transaction_hash = compute_request.transactionHash,
+            requested = operands_expected_count,
+            fetched = operands_crypto_material.len(),
+            "expected operand handles not prepared {missing_handles:?}"
+        );
         return Err(AppError::OperandsNotPrepared);
     }
     Ok(Json(operands_crypto_material))
@@ -309,6 +363,7 @@ async fn get_crypto_material_for_entry(
         .get_encrypted_shared_secret(&entry.public_key, rsa_public_key, signer, chain_id)
         .await?;
     info!(
+        handle = entry.handle,
         ciphertext = entry.ciphertext,
         encrypted_shared_secret = encrypted_shared_secret,
         iv = entry.nonce,
@@ -322,31 +377,100 @@ async fn get_crypto_material_for_entry(
     })
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NoxComputeResult {
-    chain_id: u32,
-    block_number: u64,
-    transaction_hash: String,
-    handles: Vec<HandleEntry>,
-}
-
-// TODO missing checks on chain_id, block_number and transaction_hash
+/// Receives Handles generating by a Runner computation and publishes them to S3.
+///
+/// # Errors
+///
+/// The operation fill fail with:
+/// - [`AppError::Unauthorized`] if the authorization token cannot be verified.
+/// - [`super::repository::S3Error`] if an error occurs during publishing.
 pub async fn publish_results(
     State(state): State<AppState>,
-    Json(compute_result): Json<NoxComputeResult>,
+    headers: HeaderMap,
+    Json(handles): Json<Vec<HandleEntry>>,
 ) -> Result<(), AppError> {
+    let token_bytes = extract_authorization(headers)?;
+    let authorization: NoxComputeResult =
+        serde_json::from_slice(&token_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
+
+    let domain = eip712_domain! {
+        name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
+        version: "1",
+        chain_id: u64::from(state.config.chain.id),
+    };
+    let compute_result = authorization.payload;
+    let hash = compute_result.eip712_signing_hash(&domain);
+    recover_and_check_address(
+        &state.config.runner_address,
+        &hash,
+        &authorization.signature,
+    )?;
+
     info!(
-        chain_id = compute_result.chain_id,
-        block_number = compute_result.block_number,
-        transaction_hash = compute_result.transaction_hash,
-        "Try to publish results in handles database {}",
-        compute_result.handles.len()
+        count = handles.len(),
+        chain_id = compute_result.chainId.to_string(),
+        block_number = compute_result.blockNumber.to_string(),
+        transaction_hash = compute_result.transactionHash.to_string(),
+        "Publishing result handles to S3"
     );
+
     // try create all handles in DB single transaction
-    state
-        .repository
-        .create_handles(compute_result.handles)
-        .await?;
+    state.repository.create_handles(handles).await?;
+    Ok(())
+}
+
+/// Extracts authorization token from headers.
+///
+/// # Errors
+///
+/// The method will return [`AppError::Unauthorized`] in the following situations:
+/// - no header was found.
+/// - the header value could not be parsed to a String value.
+/// - the header is malformed and does not start with the right prefix.
+/// - the header value following the `EIP712 ` prefix is not base64 encoded.
+fn extract_authorization(headers: HeaderMap) -> Result<Vec<u8>, AppError> {
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .ok_or(AppError::Unauthorized("header missing".to_string()))?
+        .to_str()
+        .map_err(|e| AppError::Unauthorized(e.to_string()))?
+        .strip_prefix("EIP712 ")
+        .ok_or(AppError::Unauthorized(
+            "malformed authorization header".to_string(),
+        ))?;
+    STANDARD
+        .decode(token)
+        .map_err(|e| AppError::Unauthorized(e.to_string()))
+}
+
+/// Recovers the address used to sign an authorization token and verifies it against an expected address.
+///
+/// # Errors
+///
+/// The method will return [`AppError::Unauthorized`] in the following situations:
+/// - The `signature` is not encoded as a valid hex value.
+/// - The signature bytes can not be converted to a `Signature`.
+/// - No address can be recovered from the provided `hash`.
+/// - There is a mismatch between the recovered address and the expected one.
+fn recover_and_check_address(
+    expected_address: &Address,
+    hash: &B256,
+    signature: &str,
+) -> Result<(), AppError> {
+    let signature_bytes =
+        hex::decode(signature).map_err(|e| AppError::Unauthorized(e.to_string()))?;
+    let signature =
+        Signature::from_raw(&signature_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
+    let recovered_address = signature
+        .recover_address_from_prehash(hash)
+        .map_err(|e| AppError::Unauthorized(e.to_string()))?;
+    if expected_address != &recovered_address {
+        warn!(
+            user = expected_address.to_string(),
+            recovered = recovered_address.to_string(),
+            "recovered address mismatch",
+        );
+        return Err(AppError::Unauthorized("invalid signature".to_string()));
+    }
     Ok(())
 }

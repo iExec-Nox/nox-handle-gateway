@@ -15,6 +15,7 @@ pub struct Config {
     pub kms: KmsConfig,
     pub s3: S3Config,
     pub signer: SignerConfig,
+    pub runner_address: Address,
 }
 
 /// HTTP server bind configuration.
@@ -98,6 +99,10 @@ impl Config {
             .set_default("kms.url", "http://localhost:9000")?
             .set_default(
                 "kms.signer_address",
+                "0x0000000000000000000000000000000000000000",
+            )?
+            .set_default(
+                "runner_address",
                 "0x0000000000000000000000000000000000000000",
             )?
             .set_default("signer.wallet_key", "")?
