@@ -24,6 +24,13 @@ pub struct Config {
 /// two headers used by this API: `content-type` (JSON bodies) and `authorization`
 /// (EIP-712 token). Extend via `NOX_HANDLE_GATEWAY_SERVER__CORS_ALLOWED_HEADERS`
 /// as a JSON array.
+///
+/// Each entry is validated at startup with [`http::header::HeaderName::from_bytes`],
+/// which enforces HTTP token syntax (RFC 7230: no control characters, no separators
+/// such as `:` or `/`). This catches malformed values but **not** typos — a value
+/// like `"authoriation"` is a valid HTTP token and will be accepted silently. If a
+/// critical header is accidentally omitted or misspelled, browsers will reject
+/// cross-origin requests for that header at the CORS preflight stage.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerConfig {
     pub host: String,
