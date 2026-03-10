@@ -60,6 +60,7 @@ impl Application {
 
         Router::new()
             .route("/", get(Self::root))
+            .route("/handles/status", post(handlers::handle_status))
             .route("/health", get(Self::health_check))
             .route("/metrics", get(Self::metrics))
             .route("/v0/compute/operands", get(handlers::get_operand_handles))

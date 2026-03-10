@@ -4,6 +4,8 @@
 //! User interactions, specifically the access to encrypted data
 //! held by a handle are verified against on-chain ACL.
 
+use std::collections::{HashMap, HashSet};
+
 use alloy_primitives::{Address, B256, U256, hex};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
@@ -417,6 +419,55 @@ pub async fn publish_results(
     // try create all handles in DB single transaction
     state.repository.create_handles(handles).await?;
     Ok(())
+}
+
+/// Request body for `POST /handles/status`.
+///
+/// Lists the handle keys (hex strings with `0x` prefix) whose resolution
+/// status the caller wants to query.
+#[derive(Debug, Deserialize)]
+pub struct HandleStatusRequest {
+    handles: Vec<String>,
+}
+
+/// Resolution status of a single handle.
+///
+/// `resolved` is `true` when the handle's encrypted entry is present in S3,
+/// meaning it has been computed and stored. `false` means the key does not
+/// exist yet — either the computation is pending or the handle is unknown.
+#[derive(Debug, Serialize)]
+pub struct HandleStatus {
+    resolved: bool,
+}
+
+/// Reports which handles from the request are already resolved (stored in S3).
+///
+/// Each entry in the response map corresponds to one handle from the request.
+/// The `resolved` field is `true` if the handle exists in S3, `false` otherwise.
+/// The endpoint performs HEAD checks only and never returns the encrypted payload.
+///
+/// # Errors
+///
+/// Returns [`AppError::StorageError`] if an unexpected S3 error occurs during
+/// the existence check (e.g., network failure or permission error).
+pub async fn handle_status(
+    State(state): State<AppState>,
+    Json(request): Json<HandleStatusRequest>,
+) -> Result<Json<HashMap<String, HandleStatus>>, AppError> {
+    let found = state.repository.handles_exist(&request.handles).await?;
+
+    let found_set: HashSet<String> = found.into_iter().collect();
+
+    let response = request
+        .handles
+        .into_iter()
+        .map(|h| {
+            let resolved = found_set.contains(&h);
+            (h, HandleStatus { resolved })
+        })
+        .collect();
+
+    Ok(Json(response))
 }
 
 /// Extracts authorization token from headers.
