@@ -448,7 +448,7 @@ fn extract_authorization(headers: HeaderMap) -> Result<Vec<u8>, AppError> {
 /// # Errors
 ///
 /// The method will return [`AppError::Unauthorized`] in the following situations:
-/// - The `signature`` is not encoded as a valid hex value.
+/// - The `signature` is not encoded as a valid hex value.
 /// - The signature bytes can not be converted to a `Signature`.
 /// - No address can be recovered from the provided `hash`.
 /// - There is a mismatch between the recovered address and the expected one.
