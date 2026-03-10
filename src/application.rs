@@ -2,7 +2,7 @@ use alloy_signer_local::PrivateKeySigner;
 use axum::{
     Json, Router,
     extract::State,
-    http::header::{AUTHORIZATION, CONTENT_TYPE},
+    http::header::AUTHORIZATION,
     routing::{get, post},
 };
 use axum_prometheus::PrometheusMetricLayer;
@@ -55,7 +55,7 @@ impl Application {
                 axum::http::Method::POST,
                 axum::http::Method::OPTIONS,
             ])
-            .allow_headers([AUTHORIZATION, CONTENT_TYPE])
+            .allow_headers([AUTHORIZATION])
             .allow_origin(tower_http::cors::Any);
 
         Router::new()
