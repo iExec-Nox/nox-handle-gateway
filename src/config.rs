@@ -122,7 +122,8 @@ impl Config {
             .add_source(
                 Environment::with_prefix("NOX_HANDLE_GATEWAY")
                     .prefix_separator("_")
-                    .separator("__"),
+                    .separator("__")
+                    .try_parsing(true),
             )
             .add_source(EnvironmentSecretFile::with_prefix("NOX_HANDLE_GATEWAY").separator("_"))
             .build()?;
