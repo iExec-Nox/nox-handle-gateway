@@ -46,20 +46,12 @@ impl Application {
     }
 
     /// Builds the Axum [`Router`] with all routes, middleware layers, and shared state.
-    fn build_router(state: AppState, prometheus_layer: PrometheusMetricLayer<'static>) -> Router {
+    fn build_router(
+        state: AppState,
+        prometheus_layer: PrometheusMetricLayer<'static>,
+        cors_allowed_headers: Vec<HeaderName>,
+    ) -> Router {
         debug!("Building application router");
-
-        let allowed_headers: Vec<HeaderName> = state
-            .config
-            .server
-            .cors_allowed_headers
-            .iter()
-            .filter_map(|h| {
-                HeaderName::from_bytes(h.as_bytes())
-                    .map_err(|_| warn!("Ignoring invalid CORS header name: {h}"))
-                    .ok()
-            })
-            .collect();
 
         let cors = CorsLayer::new()
             .allow_methods([
@@ -67,7 +59,7 @@ impl Application {
                 axum::http::Method::POST,
                 axum::http::Method::OPTIONS,
             ])
-            .allow_headers(allowed_headers)
+            .allow_headers(cors_allowed_headers)
             .allow_origin(tower_http::cors::Any);
 
         Router::new()
@@ -90,11 +82,26 @@ impl Application {
     /// Initialises all dependencies and runs the HTTP server until a shutdown signal.
     ///
     /// Startup order:
-    /// 1. Load EIP-712 signer from `config.signer.wallet_key`
-    /// 2. Connect to NoxCompute on-chain, fetch the KMS public key
-    /// 3. Build [`KmsClient`] and validate the S3 bucket
-    /// 4. Bind the TCP listener and serve until `SIGTERM` / `Ctrl+C`
+    /// 1. Validate CORS allowed headers from config
+    /// 2. Load EIP-712 signer from `config.signer.wallet_key`
+    /// 3. Connect to NoxCompute on-chain, fetch the KMS public key
+    /// 4. Build [`KmsClient`] and validate the S3 bucket
+    /// 5. Bind the TCP listener and serve until `SIGTERM` / `Ctrl+C`
     pub async fn run(self) -> anyhow::Result<()> {
+        let cors_allowed_headers: Vec<HeaderName> = self
+            .config
+            .server
+            .cors_allowed_headers
+            .iter()
+            .map(|h| {
+                HeaderName::from_bytes(h.as_bytes()).map_err(|_| {
+                    anyhow::anyhow!(
+                        "Invalid CORS header name in SERVER__CORS_ALLOWED_HEADERS: {h:?}"
+                    )
+                })
+            })
+            .collect::<anyhow::Result<_>>()?;
+
         let signer = load_signer(&self.config.signer.wallet_key)?;
         info!("EIP-712 signer address: {}", signer.address());
 
@@ -124,9 +131,12 @@ impl Application {
         let address = self.config.bind_addr();
         info!("Starting Handle Gateway on {address}");
         let listener = TcpListener::bind(address).await?;
-        axum::serve(listener, Self::build_router(state, prometheus_layer))
-            .with_graceful_shutdown(Self::shutdown_signal())
-            .await?;
+        axum::serve(
+            listener,
+            Self::build_router(state, prometheus_layer, cors_allowed_headers),
+        )
+        .with_graceful_shutdown(Self::shutdown_signal())
+        .await?;
 
         Ok(())
     }
