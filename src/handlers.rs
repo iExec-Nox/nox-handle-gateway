@@ -219,6 +219,7 @@ fn format_timestamp(ts: U256) -> String {
 }
 
 sol! {
+    /// EIP-712 compatible payload to authorize a Runner to retrieve operands from the Handle Gateway.
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct OperandAccessAuthorization {
@@ -228,6 +229,7 @@ sol! {
         string transaction_hash;
     }
 
+    /// EIP-712 compatible payload to authorize a Runner to publish results to the Handle Gateway.
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct ResultPublishingAuthorization {
@@ -238,6 +240,9 @@ sol! {
     }
 }
 
+/// Full authorization data to retrieve compute operands from the Handle Gateway.
+///
+/// It contains the plain [`OperandAccessAuthorization`] EIP-712 data with its signed hash.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NoxComputeRequest {
@@ -245,6 +250,9 @@ pub struct NoxComputeRequest {
     signature: String,
 }
 
+/// Full authorization data to publish compute results to the Handle Gateway.
+///
+/// It contains the plain [`ResultPublishingAuthorization`] EIP-712 data with its signed hash.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NoxComputeResult {
