@@ -221,22 +221,20 @@ fn format_timestamp(ts: U256) -> String {
 sol! {
     /// EIP-712 compatible payload to authorize a Runner to retrieve operands from the Handle Gateway.
     #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
     struct OperandAccessAuthorization {
         address caller;
         string[] operands;
-        string rsa_public_key;
-        string transaction_hash;
+        string rsaPublicKey;
+        string transactionHash;
     }
 
     /// EIP-712 compatible payload to authorize a Runner to publish results to the Handle Gateway.
     #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
     struct ResultPublishingAuthorization {
-        uint256 chain_id;
-        uint256 block_number;
+        uint256 chainId;
+        uint256 blockNumber;
         address caller;
-        string transaction_hash;
+        string transactionHash;
     }
 }
 
@@ -309,7 +307,7 @@ pub async fn get_operand_handles(
             .filter(|handle| !found_handles.contains(handle))
             .collect();
         error!(
-            transaction_hash = compute_request.transaction_hash,
+            transaction_hash = compute_request.transactionHash,
             requested = operands_expected_count,
             fetched = operand_handles.len(),
             "expected operand handles not found in handle database {missing_handles:?}"
@@ -324,7 +322,7 @@ pub async fn get_operand_handles(
             get_crypto_material_for_entry(
                 state.kms_client.clone(),
                 entry,
-                &compute_request.rsa_public_key,
+                &compute_request.rsaPublicKey,
                 &state.signer,
                 state.config.chain.id,
             )
@@ -344,7 +342,7 @@ pub async fn get_operand_handles(
             .filter(|handle| !found_handles.contains(handle))
             .collect();
         error!(
-            transaction_hash = compute_request.transaction_hash,
+            transaction_hash = compute_request.transactionHash,
             requested = operands_expected_count,
             fetched = operands_crypto_material.len(),
             "expected operand handles not prepared {missing_handles:?}"
@@ -410,9 +408,9 @@ pub async fn publish_results(
 
     info!(
         count = handles.len(),
-        chain_id = compute_result.chain_id.to_string(),
-        block_number = compute_result.block_number.to_string(),
-        transaction_hash = compute_result.transaction_hash.to_string(),
+        chain_id = compute_result.chainId.to_string(),
+        block_number = compute_result.blockNumber.to_string(),
+        transaction_hash = compute_result.transactionHash.to_string(),
         "Publishing result handles to S3"
     );
 
