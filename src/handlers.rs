@@ -380,11 +380,11 @@ pub async fn publish_results(
     )?;
 
     info!(
+        count = handles.len(),
         chain_id = compute_result.chain_id.to_string(),
         block_number = compute_result.block_number.to_string(),
         transaction_hash = compute_result.transaction_hash.to_string(),
-        "Try to publish results in handles database {}",
-        handles.iter().map(|e| e.handle.clone()).collect::<String>()
+        "Publishing result handles to S3"
     );
 
     // try create all handles in DB single transaction
@@ -398,7 +398,10 @@ fn extract_authorization(headers: HeaderMap) -> Result<Vec<u8>, AppError> {
         .ok_or(AppError::Unauthorized("header missing".to_string()))?
         .to_str()
         .map_err(|e| AppError::Unauthorized(e.to_string()))?
-        .trim_start_matches("EIP712 ");
+        .strip_prefix("EIP712 ")
+        .ok_or(AppError::Unauthorized(
+            "malformed authorization header".to_string(),
+        ))?;
     STANDARD
         .decode(token)
         .map_err(|e| AppError::Unauthorized(e.to_string()))
