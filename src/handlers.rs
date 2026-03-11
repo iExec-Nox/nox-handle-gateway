@@ -442,7 +442,7 @@ pub async fn publish_results(
     Ok(())
 }
 
-/// Request body for `POST /handles/status`.
+/// Request body for `POST /v0/public/handles/status`.
 ///
 /// Lists the handle keys (hex strings with `0x` prefix) whose resolution
 /// status the caller wants to query.
