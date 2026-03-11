@@ -67,6 +67,17 @@ pub struct GatewayDelegateResponse {
     iv: String,
 }
 
+/// Encrypts a plaintext value and stores it under a freshly generated handle.
+///
+/// Validates the `value` against `solidityType`, encrypts it under the KMS public key,
+/// stores the ciphertext in S3, and returns a signed EIP-712 `HandleProof`.
+///
+/// # HTTP responses
+///
+/// - `200 OK` — JSON object `{ "handle": "0x...", "proof": "0x..." }`.
+/// - `400 Bad Request` — `value` does not match the declared `solidityType`.
+/// - `409 Conflict` — handle already exists in S3.
+/// - `500 Internal Server Error` — encryption, signing, or unexpected S3 error.
 pub async fn create_handle(
     State(state): State<AppState>,
     Json(request): Json<HandleRequest>,
@@ -128,6 +139,16 @@ pub async fn create_handle(
 /// callers an ERC-1271 fallback is attempted by calling `isValidSignature` on the
 /// contract at `userAddress`. Finally `isViewer` is checked on-chain and the stored
 /// ciphertext with a KMS-delegated re-encrypted shared secret are returned.
+///
+/// # HTTP responses
+///
+/// - `200 OK` — JSON object `{ "handle", "ciphertext", "encryptedSharedSecret", "iv" }`.
+/// - `400 Bad Request` — handle path parameter is not valid hex or not 32 bytes.
+/// - `401 Unauthorized` — authorization token is missing, malformed, expired, or wrongly signed.
+/// - `403 Forbidden` — caller does not have viewer access to this handle.
+/// - `404 Not Found` — handle does not exist in S3.
+/// - `500 Internal Server Error` — unexpected S3 or KMS error.
+/// - `503 Service Unavailable` — RPC or KMS is unreachable.
 pub async fn get_handle_crypto_material(
     Path(handle): Path<String>,
     State(state): State<AppState>,
@@ -446,10 +467,10 @@ pub struct HandleStatus {
 /// The `resolved` field is `true` if the handle exists in S3, `false` otherwise.
 /// The endpoint performs HEAD checks only and never returns the encrypted payload.
 ///
-/// # Errors
+/// # HTTP responses
 ///
-/// Returns [`AppError::StorageError`] if an unexpected S3 error occurs during
-/// the existence check (e.g., network failure or permission error).
+/// - `200 OK` — JSON object mapping each requested handle to its `{ "resolved": bool }` status.
+/// - `500 Internal Server Error` — unexpected S3 error (e.g. network failure or permission error).
 pub async fn handle_status(
     State(state): State<AppState>,
     Json(request): Json<HandleStatusRequest>,
