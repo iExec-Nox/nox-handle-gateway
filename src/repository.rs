@@ -4,6 +4,7 @@
 //! `If-None-Match: *`, and idempotent batch publishing with pre-flight conflict
 //! detection.
 
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
 
@@ -364,17 +365,16 @@ impl DataRepository {
         Ok(results)
     }
 
-    /// Returns the subset of `ids` that exist in S3.
+    /// Returns the resolution status of each id in `ids`.
     ///
     /// Uses HEAD requests to check each key. Any S3 error other than 404 is
     /// propagated immediately.
-    pub async fn handles_exist(&self, ids: &[String]) -> Result<Vec<String>, S3Error> {
-        let mut found = Vec::with_capacity(ids.len());
+    pub async fn handles_exist(&self, ids: &[String]) -> Result<HashMap<String, bool>, S3Error> {
+        let mut result = HashMap::with_capacity(ids.len());
         for id in ids {
-            if !self.check_handle_absent(id).await? {
-                found.push(id.clone());
-            }
+            let exists = !self.check_handle_absent(id).await?;
+            result.insert(id.clone(), exists);
         }
-        Ok(found)
+        Ok(result)
     }
 }

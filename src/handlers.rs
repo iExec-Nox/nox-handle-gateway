@@ -4,7 +4,7 @@
 //! User interactions, specifically the access to encrypted data
 //! held by a handle are verified against on-chain ACL.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use alloy_primitives::{Address, B256, U256, hex};
 use alloy_signer::{Signature, SignerSync};
@@ -475,17 +475,12 @@ pub async fn handle_status(
     State(state): State<AppState>,
     Json(request): Json<HandleStatusRequest>,
 ) -> Result<Json<HashMap<String, HandleStatus>>, AppError> {
-    let found = state.repository.handles_exist(&request.handles).await?;
-
-    let found_set: HashSet<String> = found.into_iter().collect();
-
-    let response = request
-        .handles
+    let response = state
+        .repository
+        .handles_exist(&request.handles)
+        .await?
         .into_iter()
-        .map(|h| {
-            let resolved = found_set.contains(&h);
-            (h, HandleStatus { resolved })
-        })
+        .map(|(h, resolved)| (h, HandleStatus { resolved }))
         .collect();
 
     Ok(Json(response))
