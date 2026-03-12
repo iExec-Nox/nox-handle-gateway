@@ -22,6 +22,7 @@ use thiserror::Error;
 use tracing::{info, warn};
 
 use crate::config::S3Config;
+use crate::handlers::HandleEntryWithTag;
 
 /// Object Lock retention period: 100 years expressed in seconds.
 const RETENTION_DURATION_SECS: u64 = 100 * 365 * 24 * 3600;
@@ -289,9 +290,14 @@ impl DataRepository {
     ///   redelivery where the runner replays an already-committed batch.
     /// - Partial conflict (some exist, some don't) → returns
     ///   [`S3Error::BatchConflict`] with the conflicting keys; nothing is written.
-    pub async fn create_handles(&self, entries: Vec<HandleEntry>) -> Result<(), S3Error> {
+    pub async fn create_handles(&self, entries: Vec<HandleEntryWithTag>) -> Result<(), S3Error> {
         let mut conflicts = Vec::new();
         for entry in &entries {
+            info!(
+                handle = entry.handle,
+                tag = entry.handle_value_tag,
+                "received handle"
+            );
             match self.check_handle_absent(&entry.handle).await? {
                 true => {}
                 false => conflicts.push(entry.handle.clone()),
@@ -308,8 +314,14 @@ impl DataRepository {
             return Err(S3Error::BatchConflict { conflicts });
         }
 
-        for entry in &entries {
-            self.create_handle(entry).await?;
+        for entry_with_tag in entries {
+            let entry = HandleEntry {
+                handle: entry_with_tag.handle,
+                ciphertext: entry_with_tag.ciphertext,
+                public_key: entry_with_tag.public_key,
+                nonce: entry_with_tag.nonce,
+            };
+            self.create_handle(&entry).await?;
         }
         Ok(())
     }
