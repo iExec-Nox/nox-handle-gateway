@@ -281,7 +281,7 @@ sol! {
     /// EIP-712 compatible payload to sign and send operands from the Handle Gateway to a Runner.
     ///
     /// It wraps a list of [`HandleCryptoMaterial`]s for all handles prepared for a Runner computation.
-    /// The Runner wil receive a [`ComputeOperandResponse`] and will be able to verify data are received
+    /// The Runner will receive a [`ComputeOperandResponse`] and will be able to verify data are received
     /// from a known Handle Gateway.
     #[derive(Serialize)]
     struct ComputeOperands {
@@ -497,7 +497,7 @@ async fn get_crypto_material_for_entry(
 ///
 /// # Errors
 ///
-/// The operation fill fail with:
+/// The operation will fail with:
 /// - [`AppError::Unauthorized`] if the authorization token cannot be verified.
 /// - [`super::repository::S3Error`] if an error occurs during publishing.
 pub async fn publish_results(
