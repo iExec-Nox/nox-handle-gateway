@@ -212,10 +212,7 @@ pub async fn get_handle_crypto_material(
 
     let entry = state.repository.fetch_handle(&handle).await?;
 
-    info!(
-        "request for handle {} with key {}",
-        handle, payload.encryptionPubKey
-    );
+    info!(handle, "decryption delegation request");
     let encrypted_shared_secret = state
         .kms_client
         .get_encrypted_shared_secret(
@@ -243,6 +240,9 @@ fn format_timestamp(ts: U256) -> String {
 
 sol! {
     /// EIP-712 compatible payload to authorize a Runner to retrieve operands from the Handle Gateway.
+    ///
+    /// The Handle Gateway will receive a [`ComputeOperandRequest`] and will be able to verify
+    /// the query comes from a known Runner.
     #[derive(Deserialize)]
     struct OperandAccessAuthorization {
         address caller;
@@ -252,6 +252,9 @@ sol! {
     }
 
     /// EIP-712 compatible payload to authorize a Runner to publish results to the Handle Gateway.
+    ///
+    /// The Handle Gateway will receive a [`ComputeResultRequest`] and will be able to verify
+    /// the query comes from a known Runner.
     #[derive(Deserialize)]
     struct ResultPublishingAuthorization {
         uint256 chainId;
@@ -259,29 +262,105 @@ sol! {
         address caller;
         string transactionHash;
     }
+
+    /// EIP-712 compatible payload to share a handle after decryption delegation through the KMS.
+    ///
+    /// `encryptedSharedSecret` is encrypted with RSA in order to protect the shared secret.
+    ///
+    /// The fact that this is an EIP-712 payload allows to sign the typed data with the Handle Gateway
+    /// signer key. The client receiving the data can then verify it knows the Handle Gateway which
+    /// provided it the data.
+    #[derive(Serialize)]
+    struct HandleCryptoMaterial {
+        string handle;
+        string ciphertext;
+        string encryptedSharedSecret;
+        string iv;
+    }
+
+    /// EIP-712 compatible payload to sign and send operands from the Handle Gateway to a Runner.
+    ///
+    /// It wraps a list of [`HandleCryptoMaterial`]s for all handles prepared for a Runner computation.
+    /// The Runner will receive a [`ComputeOperandResponse`] and will be able to verify data are received
+    /// from a known Handle Gateway.
+    #[derive(Serialize)]
+    struct ComputeOperands {
+        HandleCryptoMaterial[] operands;
+    }
+
+    /// EIP-712 compatible payload to sign and send a result publishing report to the Runner.
+    ///
+    /// The fact that this is an EIP-712 payload allows to sign the typed data with the Handle Gateway
+    /// signer key. The client receiving the data can then verify it knows the Handle Gateway which
+    /// provided it the data.
+    #[derive(Serialize)]
+    struct ResultPublishingReport {
+        string message;
+    }
 }
 
 /// Full authorization data to retrieve compute operands from the Handle Gateway.
 ///
 /// It contains the plain [`OperandAccessAuthorization`] EIP-712 data with its signed hash.
+/// This allows the Handle Gateway to verify the Runner is known.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NoxComputeRequest {
+pub struct ComputeOperandRequest {
     payload: OperandAccessAuthorization,
     signature: String,
 }
 
-/// Full authorization data to publish compute results to the Handle Gateway.
+/// Full response to send operands from the Handle Gateway to the Runner.
+///
+/// It contains the plain [`ComputeOperands`] EIP-712 data with its signed hash.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComputeOperandResponse {
+    payload: ComputeOperands,
+    signature: String,
+}
+
+/// Full authorization data to receive compute results from a Runner.
 ///
 /// It contains the plain [`ResultPublishingAuthorization`] EIP-712 data with its signed hash.
+/// This allows the Handle Gateway to verify the Runner is known.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NoxComputeResult {
+pub struct ComputeResultRequest {
     payload: ResultPublishingAuthorization,
     signature: String,
 }
 
+/// Atomic handle data sent by a known Runner when publishing results.
+///
+/// The `handle_value_tag` field allows to verify if the same handle
+/// has already been published with the same plaintext value.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HandleEntryWithTag {
+    pub handle: String,
+    pub handle_value_tag: String,
+    pub ciphertext: String,
+    pub public_key: String,
+    pub nonce: String,
+}
+
+/// Response sent to the Runner when publishing computation results.
+///
+/// The response contains [`ResultPublishingReport`] EIP-712 data with its signed hash.
+/// This allows the Runner to verify the data was sent to a known Handle Gateway.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComputeResultResponse {
+    payload: ResultPublishingReport,
+    signature: String,
+}
+
 /// Retrieves from S3 Handles required as operands by a Runner to perform a computation.
+///
+/// An `Authorization` header is mandatory and used to check the query comes from
+/// a known Runner. At the end of the execution, a [`response`](ComputeOperandResponse)
+/// containing an EIP-712 payload with its signed hash is sent to the Runner.
 ///
 /// # Errors
 ///
@@ -292,9 +371,9 @@ pub struct NoxComputeResult {
 pub async fn get_operand_handles(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<GatewayDelegateResponse>>, AppError> {
+) -> Result<Json<ComputeOperandResponse>, AppError> {
     let token_bytes = extract_authorization(headers)?;
-    let authorization: NoxComputeRequest =
+    let authorization: ComputeOperandRequest =
         serde_json::from_slice(&token_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
 
     let domain = eip712_domain! {
@@ -340,7 +419,7 @@ pub async fn get_operand_handles(
         ));
     }
 
-    let operands_crypto_material: Vec<GatewayDelegateResponse> =
+    let operands_crypto_material: Vec<HandleCryptoMaterial> =
         join_all(operand_handles.iter().map(|entry| {
             get_crypto_material_for_entry(
                 state.kms_client.clone(),
@@ -372,7 +451,17 @@ pub async fn get_operand_handles(
         );
         return Err(AppError::OperandsNotPrepared);
     }
-    Ok(Json(operands_crypto_material))
+    let payload = ComputeOperands {
+        operands: operands_crypto_material,
+    };
+
+    let signature = state
+        .signer
+        .sign_typed_data_sync(&payload, &domain)
+        .map_err(|e| AppError::SigningError(e.to_string()))?
+        .to_string();
+
+    Ok(Json(ComputeOperandResponse { payload, signature }))
 }
 
 async fn get_crypto_material_for_entry(
@@ -381,7 +470,7 @@ async fn get_crypto_material_for_entry(
     rsa_public_key: &str,
     signer: &PrivateKeySigner,
     chain_id: u32,
-) -> Result<GatewayDelegateResponse, AppError> {
+) -> Result<HandleCryptoMaterial, AppError> {
     let encrypted_shared_secret = kms_client
         .get_encrypted_shared_secret(&entry.public_key, rsa_public_key, signer, chain_id)
         .await?;
@@ -390,30 +479,34 @@ async fn get_crypto_material_for_entry(
         ciphertext = entry.ciphertext,
         encrypted_shared_secret = encrypted_shared_secret,
         iv = entry.nonce,
-        "GatewayDelegateResponse"
+        "handle crypto material"
     );
-    Ok(GatewayDelegateResponse {
+    Ok(HandleCryptoMaterial {
         handle: entry.handle.clone(),
         ciphertext: entry.ciphertext.clone(),
-        encrypted_shared_secret,
+        encryptedSharedSecret: encrypted_shared_secret,
         iv: entry.nonce.clone(),
     })
 }
 
 /// Receives Handles generating by a Runner computation and publishes them to S3.
 ///
+/// An `Authorization` header is mandatory and used to check the query comes from
+/// a known Runner. At the end of the execution, a [`response`](ComputeResultResponse)
+/// containing an EIP-712 payload with its signed hash is sent to the Runner.
+///
 /// # Errors
 ///
-/// The operation fill fail with:
+/// The operation will fail with:
 /// - [`AppError::Unauthorized`] if the authorization token cannot be verified.
 /// - [`super::repository::S3Error`] if an error occurs during publishing.
 pub async fn publish_results(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(handles): Json<Vec<HandleEntry>>,
-) -> Result<(), AppError> {
+    Json(handles): Json<Vec<HandleEntryWithTag>>,
+) -> Result<Json<ComputeResultResponse>, AppError> {
     let token_bytes = extract_authorization(headers)?;
-    let authorization: NoxComputeResult =
+    let authorization: ComputeResultRequest =
         serde_json::from_slice(&token_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
 
     let domain = eip712_domain! {
@@ -434,12 +527,22 @@ pub async fn publish_results(
         chain_id = compute_result.chainId.to_string(),
         block_number = compute_result.blockNumber.to_string(),
         transaction_hash = compute_result.transactionHash.to_string(),
-        "Publishing result handles to S3"
+        "publishing result handles to S3"
     );
 
-    // try create all handles in DB single transaction
     state.repository.create_handles(handles).await?;
-    Ok(())
+
+    let payload = ResultPublishingReport {
+        message: "all handles were successfully published".to_string(),
+    };
+
+    let signature = state
+        .signer
+        .sign_typed_data_sync(&payload, &domain)
+        .map_err(|e| AppError::SigningError(e.to_string()))?
+        .to_string();
+
+    Ok(Json(ComputeResultResponse { payload, signature }))
 }
 
 /// Request body for `POST /v0/public/handles/status`.
