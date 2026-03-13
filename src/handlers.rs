@@ -658,6 +658,7 @@ pub async fn handle_status(
     State(state): State<AppState>,
     Json(request): Json<HandleStatusRequest>,
 ) -> Result<Json<HashMap<String, HandleStatus>>, AppError> {
+    info!(count = request.handles.len(), "handle status request");
     let response = state
         .repository
         .handles_exist(&request.handles)
