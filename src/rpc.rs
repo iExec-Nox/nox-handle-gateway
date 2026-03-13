@@ -9,6 +9,7 @@ sol! {
     #[sol(rpc)]
     interface INoxCompute {
         function isViewer(bytes32 handle, address viewer) external view returns (bool);
+        function isPubliclyDecryptable(bytes32 handle) external view returns (bool);
         function kmsPublicKey() external view returns (bytes memory);
     }
 
@@ -90,6 +91,25 @@ impl NoxClient {
             .await
             .map_err(RpcError::CallFailure)?;
         if is_viewer {
+            Ok(())
+        } else {
+            Err(RpcError::AccessDenied)
+        }
+    }
+
+    /// Verify that `handle` is marked as publicly decryptable on-chain.
+    ///
+    /// Calls `isPubliclyDecryptable(handle)` on the NoxCompute contract. Returns
+    /// `Ok(())` when the handle is publicly decryptable, [`RpcError::AccessDenied`]
+    /// when it is not.
+    pub async fn check_publicly_decryptable(&self, handle: B256) -> Result<(), RpcError> {
+        let is_public = self
+            .contract
+            .isPubliclyDecryptable(handle)
+            .call()
+            .await
+            .map_err(RpcError::CallFailure)?;
+        if is_public {
             Ok(())
         } else {
             Err(RpcError::AccessDenied)

@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use alloy_primitives::{Address, B256, U256, hex};
+use alloy_primitives::{Address, B256, Bytes, U256, hex};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolStruct, eip712_domain, sol};
@@ -23,11 +23,10 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
 use crate::application::AppState;
-use crate::crypto::ecies_encrypt;
 use crate::error::AppError;
 use crate::kms::KmsClient;
 use crate::repository::HandleEntry;
-use crate::types::{DataAccessAuthorization, Handle, HandleProof, SolidityType};
+use crate::types::{DataAccessAuthorization, DecryptionProof, Handle, HandleProof, SolidityType};
 use crate::validation::decode_and_validate_value;
 
 /// EIP-712 domain name for HandleProof generation.
@@ -49,6 +48,13 @@ pub struct HandleRequest {
 pub struct HandleResponse {
     handle: String,
     proof: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicDecryptResponse {
+    pub handle: String,
+    pub decryption_proof: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,7 +90,7 @@ pub async fn create_handle(
 ) -> Result<Json<HandleResponse>, AppError> {
     // Handle
     let plaintext = decode_and_validate_value(&request.value, &request.solidity_type)?;
-    let ecies_ciphertext = ecies_encrypt(&plaintext, &state.kms_client.public_key)?;
+    let ecies_ciphertext = state.crypto.ecies_encrypt(&plaintext)?;
 
     let handle = Handle::new(state.config.chain.id, request.solidity_type).to_bytes();
 
@@ -200,11 +206,7 @@ pub async fn get_handle_crypto_material(
             .await?;
     }
 
-    let handle_raw = hex::decode(&handle).map_err(|e| AppError::BadRequest(e.to_string()))?;
-    if handle_raw.len() != 32 {
-        return Err(AppError::BadRequest("invalid handle".to_string()));
-    }
-    let handle_b256 = B256::from_slice(&handle_raw);
+    let handle_b256 = parse_handle(&handle)?;
     state
         .nox_client
         .check_access(handle_b256, payload.userAddress)
@@ -227,6 +229,84 @@ pub async fn get_handle_crypto_material(
         ciphertext: entry.ciphertext,
         encrypted_shared_secret,
         iv: entry.nonce,
+    }))
+}
+
+/// Returns a verifiable EIP-712 decryption proof for a publicly decryptable handle.
+///
+/// Checks handle format, on-chain public decryptability, and S3 existence (in that
+/// order) before performing decryption. The returned `decryptionProof` is the
+/// 65-byte gateway signature concatenated with the ABI-encoded decrypted value.
+///
+/// # HTTP responses
+///
+/// - `200 OK` — JSON `{ "handle": "0x...", "decryptionProof": "0x..." }`.
+/// - `400 Bad Request` — handle is not valid 32-byte hex.
+/// - `403 Forbidden` — handle is not marked as publicly decryptable on-chain.
+/// - `404 Not Found` — handle does not exist in S3.
+/// - `500 Internal Server Error` — crypto or signing failure.
+/// - `503 Service Unavailable` — RPC or KMS unreachable.
+pub async fn public_decrypt(
+    Path(handle): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<PublicDecryptResponse>, AppError> {
+    info!(handle = %handle, "public_decrypt query");
+
+    let handle_b256 = parse_handle(&handle)?;
+
+    state
+        .nox_client
+        .check_publicly_decryptable(handle_b256)
+        .await?;
+
+    let entry = state.repository.fetch_handle(&handle).await?;
+
+    // KMS delegate → encrypted shared secret
+    let encrypted_shared_secret = state
+        .kms_client
+        .get_encrypted_shared_secret(
+            &entry.public_key,
+            &state.crypto.rsa_public_hex,
+            &state.signer,
+            state.config.chain.id,
+        )
+        .await?;
+
+    // RSA-OAEP decrypt → HKDF + AES-256-GCM → plaintext bytes
+    let plaintext =
+        state
+            .crypto
+            .ecies_decrypt(&entry.ciphertext, &encrypted_shared_secret, &entry.nonce)?;
+
+    // ABI-encode per SolidityType from handle byte [30]
+    let solidity_type = SolidityType::try_from(handle_b256[30])?;
+    let decrypted_result = solidity_type.abi_encode(&plaintext)?;
+
+    // Sign `DecryptionProof` EIP-712 under the `NoxCompute` domain
+    let domain = eip712_domain! {
+        name: NOX_COMPUTE_EIP712_DOMAIN_NAME,
+        version: "1",
+        chain_id: u64::from(state.config.chain.id),
+        verifying_contract: state.config.chain.nox_compute_contract,
+    };
+    let proof_struct = DecryptionProof {
+        handle: handle_b256,
+        decryptedResult: Bytes::from(decrypted_result.clone()),
+    };
+    let signature = state
+        .signer
+        .sign_typed_data_sync(&proof_struct, &domain)
+        .map_err(|e| AppError::SigningError(e.to_string()))?
+        .as_bytes();
+
+    // Serialize: sig (65 bytes) || decryptedResult (N bytes)
+    let mut serialized = Vec::with_capacity(65 + decrypted_result.len());
+    serialized.extend_from_slice(&signature);
+    serialized.extend_from_slice(&decrypted_result);
+
+    Ok(Json(PublicDecryptResponse {
+        handle,
+        decryption_proof: hex::encode_prefixed(serialized),
     }))
 }
 
@@ -643,4 +723,20 @@ fn recover_and_check_address(
         return Err(AppError::Unauthorized("invalid signature".to_string()));
     }
     Ok(())
+}
+
+/// Parses a handle from a hex string and returns a 32-byte B256.
+///
+/// # Errors
+///
+/// The method will return [`AppError::BadRequest`] if the handle is not a valid 32-byte hex string.
+fn parse_handle(handle: &str) -> Result<B256, AppError> {
+    let raw = hex::decode(handle).map_err(|e| AppError::BadRequest(e.to_string()))?;
+    if raw.len() != 32 {
+        return Err(AppError::BadRequest(format!(
+            "handle must be 32 bytes, got {}",
+            raw.len()
+        )));
+    }
+    Ok(B256::from_slice(&raw))
 }
