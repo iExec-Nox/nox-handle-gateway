@@ -55,7 +55,7 @@ pub struct EciesCiphertext {
 pub struct CryptoService {
     protocol_key: PublicKey,
     private: RsaPrivateKey,
-    pub rsa_public_hex: String,
+    pub rsa_public_key: String,
 }
 
 impl CryptoService {
@@ -63,20 +63,20 @@ impl CryptoService {
     pub fn new(protocol_key: PublicKey) -> Result<Self, Error> {
         let key = RsaPrivateKey::new(&mut OsRng, 2048)
             .map_err(|e| Error::RsaKeyGenError(e.to_string()))?;
-        let rsa_public_hex = hex::encode_prefixed(
+        let rsa_public_key = hex::encode_prefixed(
             RsaPublicKey::from(&key)
                 .to_public_key_der()
                 .map_err(|e| Error::RsaKeyGenError(e.to_string()))?,
         );
         info!(
-            protocol_key = %hex::encode(protocol_key.to_sec1_bytes()),
-            rsa_public_key = %rsa_public_hex,
+            protocol_key = %hex::encode_prefixed(protocol_key.to_sec1_bytes()),
+            rsa_public_key,
             "Crypto service initialized"
         );
         Ok(Self {
             protocol_key,
             private: key,
-            rsa_public_hex,
+            rsa_public_key,
         })
     }
 

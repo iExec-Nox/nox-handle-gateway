@@ -90,7 +90,7 @@ pub async fn create_handle(
 ) -> Result<Json<HandleResponse>, AppError> {
     // Handle
     let plaintext = decode_and_validate_value(&request.value, &request.solidity_type)?;
-    let ecies_ciphertext = state.crypto.ecies_encrypt(&plaintext)?;
+    let ecies_ciphertext = state.crypto_svc.ecies_encrypt(&plaintext)?;
 
     let handle = Handle::new(state.config.chain.id, request.solidity_type).to_bytes();
 
@@ -266,17 +266,18 @@ pub async fn public_decrypt(
         .kms_client
         .get_encrypted_shared_secret(
             &entry.public_key,
-            &state.crypto.rsa_public_hex,
+            &state.crypto_svc.rsa_public_key,
             &state.signer,
             state.config.chain.id,
         )
         .await?;
 
     // RSA-OAEP decrypt → HKDF + AES-256-GCM → plaintext bytes
-    let plaintext =
-        state
-            .crypto
-            .ecies_decrypt(&entry.ciphertext, &encrypted_shared_secret, &entry.nonce)?;
+    let plaintext = state.crypto_svc.ecies_decrypt(
+        &entry.ciphertext,
+        &encrypted_shared_secret,
+        &entry.nonce,
+    )?;
 
     // ABI-encode per SolidityType from handle byte [30]
     let solidity_type = SolidityType::try_from(handle_b256[30])?;

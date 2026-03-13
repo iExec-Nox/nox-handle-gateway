@@ -25,7 +25,7 @@ use crate::rpc::NoxClient;
 pub struct AppState {
     pub nox_client: NoxClient,
     pub config: Config,
-    pub crypto: CryptoService,
+    pub crypto_svc: CryptoService,
     pub kms_client: KmsClient,
     pub metrics_handle: PrometheusHandle,
     pub repository: DataRepository,
@@ -95,7 +95,7 @@ impl Application {
         )
         .await?;
         let kms_public_key = nox_client.kms_public_key().await?;
-        let crypto = CryptoService::new(kms_public_key)?;
+        let crypto_svc = CryptoService::new(kms_public_key)?;
         let kms_client =
             KmsClient::new(self.config.kms.url.clone(), self.config.kms.signer_address)?;
         let repository = DataRepository::new(&self.config.s3).await?;
@@ -104,7 +104,7 @@ impl Application {
         let state = AppState {
             nox_client,
             config: self.config.clone(),
-            crypto,
+            crypto_svc,
             kms_client,
             metrics_handle,
             repository,

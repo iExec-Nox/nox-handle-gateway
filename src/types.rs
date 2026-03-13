@@ -69,22 +69,22 @@ impl SolidityType {
     /// - `bytesN`: right-padded to 32 bytes.
     /// - `uint*`, `int*`, `bool`, `address`: left-padded to 32 bytes (big-endian).
     ///
-    /// Returns an error if `plaintext.len() > 32` for static types.
+    /// Returns an error if `plaintext.len() > 32` for static types (exceeds one ABI word).
     pub fn abi_encode(&self, plaintext: &[u8]) -> Result<Vec<u8>, AppError> {
-        const SLOT: usize = 32;
+        const WORD: usize = 32; // one ABI word = 32 bytes (the EVM word size)
 
         match self {
             // Dynamic types: return plaintext as-is (variable-length decryptedResult).
             SolidityType::Bytes | SolidityType::String => Ok(plaintext.to_vec()),
-            // Static types: pack into a 32-byte ABI slot.
+            // Static types: pack into a 32-byte ABI word.
             _ => {
-                if plaintext.len() > SLOT {
+                if plaintext.len() > WORD {
                     return Err(AppError::InvalidSolidityValue(format!(
-                        "plaintext length {} exceeds 32-byte ABI slot",
+                        "plaintext length {} exceeds 32-byte ABI word",
                         plaintext.len()
                     )));
                 }
-                let mut out = [0u8; SLOT];
+                let mut out = [0u8; WORD];
                 match self {
                     // bytesN: right-pad with zeros.
                     SolidityType::FixedBytes(_) => {
@@ -92,7 +92,7 @@ impl SolidityType {
                     }
                     // uint*, int*, bool, address: left-pad with zeros (big-endian).
                     _ => {
-                        out[SLOT - plaintext.len()..].copy_from_slice(plaintext);
+                        out[WORD - plaintext.len()..].copy_from_slice(plaintext);
                     }
                 }
                 Ok(out.to_vec())
