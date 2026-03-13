@@ -27,7 +27,7 @@ use crate::error::AppError;
 use crate::kms::KmsClient;
 use crate::repository::HandleEntry;
 use crate::types::{DataAccessAuthorization, DecryptionProof, Handle, HandleProof, SolidityType};
-use crate::validation::decode_and_validate_value;
+use crate::validation::{decode_and_validate_value, parse_handle};
 
 /// EIP-712 domain name for HandleProof generation.
 const NOX_COMPUTE_EIP712_DOMAIN_NAME: &str = "NoxCompute";
@@ -723,20 +723,4 @@ fn recover_and_check_address(
         return Err(AppError::Unauthorized("invalid signature".to_string()));
     }
     Ok(())
-}
-
-/// Parses a handle from a hex string and returns a 32-byte B256.
-///
-/// # Errors
-///
-/// The method will return [`AppError::BadRequest`] if the handle is not a valid 32-byte hex string.
-fn parse_handle(handle: &str) -> Result<B256, AppError> {
-    let raw = hex::decode(handle).map_err(|e| AppError::BadRequest(e.to_string()))?;
-    if raw.len() != 32 {
-        return Err(AppError::BadRequest(format!(
-            "handle must be 32 bytes, got {}",
-            raw.len()
-        )));
-    }
-    Ok(B256::from_slice(&raw))
 }
