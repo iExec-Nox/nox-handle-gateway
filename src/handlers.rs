@@ -573,11 +573,20 @@ pub struct HandleStatus {
 /// # HTTP responses
 ///
 /// - `200 OK` — JSON object mapping each requested handle to its `{ "resolved": bool }` status.
+/// - `400 Bad Request` — more than 500 handles in the request.
 /// - `500 Internal Server Error` — unexpected S3 error (e.g. network failure or permission error).
 pub async fn handle_status(
     State(state): State<AppState>,
     Json(request): Json<HandleStatusRequest>,
 ) -> Result<Json<HashMap<String, HandleStatus>>, AppError> {
+    const MAX_HANDLES: usize = 500;
+    if request.handles.len() > MAX_HANDLES {
+        return Err(AppError::BadRequest(format!(
+            "too many handles: got {}, maximum is {MAX_HANDLES}",
+            request.handles.len()
+        )));
+    }
+
     let response = state
         .repository
         .handles_exist(&request.handles)
