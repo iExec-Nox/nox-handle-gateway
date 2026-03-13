@@ -379,14 +379,18 @@ impl DataRepository {
 
     /// Returns the resolution status of each id in `ids`.
     ///
-    /// Uses HEAD requests to check each key. Any S3 error other than 404 is
-    /// propagated immediately.
+    /// Uses HEAD requests to check each key concurrently. Any S3 error other
+    /// than 404 is propagated immediately.
     pub async fn handles_exist(&self, ids: &[String]) -> Result<HashMap<String, bool>, S3Error> {
-        let mut result = HashMap::with_capacity(ids.len());
-        for id in ids {
-            let exists = !self.check_handle_absent(id).await?;
-            result.insert(id.clone(), exists);
-        }
-        Ok(result)
+        let futures = ids.iter().map(|id| async move {
+            self.check_handle_absent(id)
+                .await
+                .map(|absent| (id, !absent))
+        });
+        let pairs = futures::future::try_join_all(futures).await?;
+        Ok(pairs
+            .into_iter()
+            .map(|(id, exists)| (id.clone(), exists))
+            .collect())
     }
 }
