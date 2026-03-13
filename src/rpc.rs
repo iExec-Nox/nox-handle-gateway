@@ -82,7 +82,8 @@ impl NoxClient {
     ///
     /// Calls `isViewer(handle, viewer)` on the NoxCompute contract. Returns
     /// `Ok(())` when access is granted, [`RpcError::AccessDenied`] when it is
-    /// not.
+    /// not. Returns [`RpcError::CallFailure`] if the RPC node is unreachable or
+    /// the call fails for any transport reason.
     pub async fn check_access(&self, handle: B256, viewer: Address) -> Result<(), RpcError> {
         let is_viewer = self
             .contract
@@ -101,7 +102,8 @@ impl NoxClient {
     ///
     /// Calls `isPubliclyDecryptable(handle)` on the NoxCompute contract. Returns
     /// `Ok(())` when the handle is publicly decryptable, [`RpcError::AccessDenied`]
-    /// when it is not.
+    /// when it is not. Returns [`RpcError::CallFailure`] if the RPC node is
+    /// unreachable or the call fails for any transport reason.
     pub async fn is_publicly_decryptable(&self, handle: B256) -> Result<(), RpcError> {
         let is_public = self
             .contract
