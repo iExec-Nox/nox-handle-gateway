@@ -102,7 +102,7 @@ impl NoxClient {
     /// Calls `isPubliclyDecryptable(handle)` on the NoxCompute contract. Returns
     /// `Ok(())` when the handle is publicly decryptable, [`RpcError::AccessDenied`]
     /// when it is not.
-    pub async fn check_publicly_decryptable(&self, handle: B256) -> Result<(), RpcError> {
+    pub async fn is_publicly_decryptable(&self, handle: B256) -> Result<(), RpcError> {
         let is_public = self
             .contract
             .isPubliclyDecryptable(handle)

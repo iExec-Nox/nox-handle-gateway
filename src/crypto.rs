@@ -63,13 +63,10 @@ impl CryptoService {
     pub fn new(protocol_key: PublicKey) -> Result<Self, Error> {
         let key = RsaPrivateKey::new(&mut OsRng, 2048)
             .map_err(|e| Error::RsaKeyGenError(e.to_string()))?;
-        let rsa_public_hex = format!(
-            "0x{}",
-            hex::encode(
-                RsaPublicKey::from(&key)
-                    .to_public_key_der()
-                    .map_err(|e| Error::RsaKeyGenError(e.to_string()))?
-            )
+        let rsa_public_hex = hex::encode_prefixed(
+            RsaPublicKey::from(&key)
+                .to_public_key_der()
+                .map_err(|e| Error::RsaKeyGenError(e.to_string()))?,
         );
         info!(
             protocol_key = %hex::encode(protocol_key.to_sec1_bytes()),
@@ -101,7 +98,7 @@ impl CryptoService {
             .encrypt(nonce_arr, plaintext)
             .map_err(|e| Error::AesGcmError(e.to_string()))?;
 
-        let ephemeral_pubkey = encode_pubkey_compressed(&ephemeral_secret);
+        let ephemeral_pubkey = Self::encode_pubkey_compressed(&ephemeral_secret);
 
         Ok(EciesCiphertext {
             ephemeral_pubkey,
@@ -184,13 +181,13 @@ impl CryptoService {
 
         Ok(signer)
     }
-}
 
-/// Encode an EC public key as compressed SEC1 format (33 bytes).
-fn encode_pubkey_compressed(secret: &EphemeralSecret) -> [u8; 33] {
-    let encoded = secret.public_key().to_encoded_point(true);
-    let bytes = encoded.as_bytes();
-    let mut result = [0u8; 33];
-    result.copy_from_slice(bytes);
-    result
+    /// Encode an EC public key as compressed SEC1 format (33 bytes).
+    fn encode_pubkey_compressed(secret: &EphemeralSecret) -> [u8; 33] {
+        let encoded = secret.public_key().to_encoded_point(true);
+        let bytes = encoded.as_bytes();
+        let mut result = [0u8; 33];
+        result.copy_from_slice(bytes);
+        result
+    }
 }

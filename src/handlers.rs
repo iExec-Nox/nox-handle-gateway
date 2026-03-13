@@ -250,13 +250,13 @@ pub async fn public_decrypt(
     Path(handle): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Json<PublicDecryptResponse>, AppError> {
-    info!(handle = %handle, "public_decrypt query");
-
     let handle_b256 = parse_handle(&handle)?;
+
+    info!(handle = %handle, "public_decrypt query");
 
     state
         .nox_client
-        .check_publicly_decryptable(handle_b256)
+        .is_publicly_decryptable(handle_b256)
         .await?;
 
     let entry = state.repository.fetch_handle(&handle).await?;
