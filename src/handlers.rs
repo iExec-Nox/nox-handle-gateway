@@ -250,6 +250,7 @@ pub async fn public_decrypt(
     State(state): State<AppState>,
 ) -> Result<Json<PublicDecryptResponse>, AppError> {
     let handle_b256 = parse_handle(&handle)?;
+    let solidity_type = SolidityType::try_from(handle_b256[30])?;
 
     info!(handle = %handle, "public_decrypt query");
 
@@ -271,15 +272,12 @@ pub async fn public_decrypt(
         )
         .await?;
 
-    // RSA-OAEP decrypt → HKDF + AES-256-GCM → plaintext bytes
+    // RSA-OAEP decrypt → HKDF + AES-256-GCM → plaintext bytes → ABI-encode per SolidityType
     let plaintext = state.crypto_svc.ecies_decrypt(
         &entry.ciphertext,
         &encrypted_shared_secret,
         &entry.nonce,
     )?;
-
-    // ABI-encode per SolidityType from handle byte [30]
-    let solidity_type = SolidityType::try_from(handle_b256[30])?;
     let decrypted_result = solidity_type.abi_encode(&plaintext)?;
 
     // Sign `DecryptionProof` EIP-712 under the `NoxCompute` domain
