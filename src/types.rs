@@ -62,43 +62,6 @@ impl SolidityType {
             }
         }
     }
-
-    /// ABI-encodes `plaintext` according to this type's padding rules.
-    ///
-    /// - `bytes` / `string`: returned as-is (variable length).
-    /// - `bytesN`: right-padded to 32 bytes.
-    /// - `uint*`, `int*`, `bool`, `address`: left-padded to 32 bytes (big-endian).
-    ///
-    /// Returns an error if `plaintext.len() > 32` for static types (exceeds one ABI word).
-    pub fn abi_encode(&self, plaintext: &[u8]) -> Result<Vec<u8>, AppError> {
-        const WORD: usize = 32; // one ABI word = 32 bytes (the EVM word size)
-
-        match self {
-            // Dynamic types: return plaintext as-is (variable-length decryptedResult).
-            SolidityType::Bytes | SolidityType::String => Ok(plaintext.to_vec()),
-            // Static types: pack into a 32-byte ABI word.
-            _ => {
-                if plaintext.len() > WORD {
-                    return Err(AppError::InvalidSolidityValue(format!(
-                        "plaintext length {} exceeds 32-byte ABI word",
-                        plaintext.len()
-                    )));
-                }
-                let mut out = [0u8; WORD];
-                match self {
-                    // bytesN: right-pad with zeros.
-                    SolidityType::FixedBytes(_) => {
-                        out[..plaintext.len()].copy_from_slice(plaintext);
-                    }
-                    // uint*, int*, bool, address: left-pad with zeros (big-endian).
-                    _ => {
-                        out[WORD - plaintext.len()..].copy_from_slice(plaintext);
-                    }
-                }
-                Ok(out.to_vec())
-            }
-        }
-    }
 }
 
 impl FromStr for SolidityType {
@@ -268,7 +231,6 @@ sol! {
     /// Signed under the NoxCompute domain (same as [`HandleProof`]).
     #[derive(Debug)]
     struct DecryptionProof {
-        bytes32 handle;
         bytes decryptedResult;
     }
 }
