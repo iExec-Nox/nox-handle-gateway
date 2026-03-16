@@ -13,7 +13,7 @@ const HANDLE_VERSION: u8 = 0x00; // V0
 ///
 /// All gateway-created handles carry this flag because the prehandle is
 /// cryptographically random (OsRng), making collisions astronomically unlikely.
-pub const ATTR_IS_UNIQ_HANDLE: u8 = 0x01;
+pub const ATTR_IS_UNIQUE_HANDLE: u8 = 0x01;
 /// EIP-712 domain version shared across all domains in this service.
 pub const EIP_712_DOMAIN_VERSION: &str = "1";
 /// EIP-712 domain name used for `DelegateAuthorization` and `DelegateResponseProof`.
@@ -165,7 +165,7 @@ impl<'de> Deserialize<'de> for SolidityType {
 /// - `[0]`     version (currently `0x00`)
 /// - `[1-4]`   chain_id (big-endian u32)
 /// - `[5]`     solidity_type byte (see [`SolidityType::to_byte`])
-/// - `[6]`     attrs (see [`ATTR_IS_UNIQ_HANDLE`])
+/// - `[6]`     attrs (see [`ATTR_IS_UNIQUE_HANDLE`])
 /// - `[7-31]`  prehandle: 25 random bytes (OsRng)
 #[derive(Debug)]
 pub struct Handle {
@@ -186,7 +186,7 @@ impl Handle {
             version: HANDLE_VERSION,
             chain_id: chain_id.to_be_bytes(),
             solidity_type: solidity_type.to_byte(),
-            attrs: ATTR_IS_UNIQ_HANDLE,
+            attrs: ATTR_IS_UNIQUE_HANDLE,
             prehandle,
         }
     }
