@@ -14,7 +14,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{debug, info, warn};
 
 use crate::config::Config;
-use crate::crypto::load_signer;
+use crate::crypto::CryptoService;
 use crate::handlers;
 use crate::kms::KmsClient;
 use crate::repository::DataRepository;
@@ -25,6 +25,7 @@ use crate::rpc::NoxClient;
 pub struct AppState {
     pub nox_client: NoxClient,
     pub config: Config,
+    pub crypto_svc: CryptoService,
     pub kms_client: KmsClient,
     pub metrics_handle: PrometheusHandle,
     pub repository: DataRepository,
@@ -68,6 +69,7 @@ impl Application {
             .route("/metrics", get(Self::metrics))
             .route("/v0/compute/operands", get(handlers::get_operand_handles))
             .route("/v0/compute/results", post(handlers::publish_results))
+            .route("/v0/public/{handle}", get(handlers::public_decrypt))
             .route("/v0/public/handles/status", post(handlers::handle_status))
             .route("/v0/secrets", post(handlers::create_handle))
             .route(
@@ -103,7 +105,7 @@ impl Application {
             })
             .collect::<anyhow::Result<_>>()?;
 
-        let signer = load_signer(&self.config.signer.wallet_key)?;
+        let signer = CryptoService::load_signer(&self.config.signer.wallet_key)?;
         info!("EIP-712 signer address: {}", signer.address());
 
         let nox_client: NoxClient = NoxClient::new(
@@ -112,17 +114,16 @@ impl Application {
         )
         .await?;
         let kms_public_key = nox_client.kms_public_key().await?;
-        let kms_client = KmsClient::new(
-            self.config.kms.url.clone(),
-            kms_public_key,
-            self.config.kms.signer_address,
-        )?;
+        let crypto_svc = CryptoService::new(kms_public_key)?;
+        let kms_client =
+            KmsClient::new(self.config.kms.url.clone(), self.config.kms.signer_address)?;
         let repository = DataRepository::new(&self.config.s3).await?;
 
         let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
         let state = AppState {
             nox_client,
             config: self.config.clone(),
+            crypto_svc,
             kms_client,
             metrics_handle,
             repository,

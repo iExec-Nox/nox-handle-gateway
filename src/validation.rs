@@ -1,4 +1,4 @@
-use alloy_primitives::hex;
+use alloy_primitives::{B256, hex};
 
 use crate::error::AppError;
 use crate::types::SolidityType;
@@ -80,4 +80,20 @@ fn validate_size(bytes: &[u8], solidity_type: &SolidityType) -> Result<(), AppEr
     }
 
     Ok(())
+}
+
+/// Parses a handle from a hex string and returns a 32-byte B256.
+///
+/// # Errors
+///
+/// The method will return [`AppError::BadRequest`] if the handle is not a valid 32-byte hex string.
+pub fn parse_handle(handle: &str) -> Result<B256, AppError> {
+    let raw = hex::decode(handle).map_err(|e| AppError::BadRequest(e.to_string()))?;
+    if raw.len() != 32 {
+        return Err(AppError::BadRequest(format!(
+            "handle must be 32 bytes, got {}",
+            raw.len()
+        )));
+    }
+    Ok(B256::from_slice(&raw))
 }

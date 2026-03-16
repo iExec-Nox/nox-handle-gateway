@@ -2,7 +2,6 @@ use alloy_primitives::{Address, hex};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolStruct, eip712_domain};
-use k256::PublicKey;
 use reqwest::{Client, header::AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -63,7 +62,6 @@ pub struct KmsDelegateResponse {
 pub struct KmsClient {
     pub client: Client,
     pub base_url: String,
-    pub public_key: PublicKey,
     pub kms_signer_address: Address,
 }
 
@@ -73,23 +71,14 @@ impl KmsClient {
     /// `public_key` is the KMS EC public key fetched on-chain from NoxCompute.
     /// `kms_signer_address` is the Ethereum address whose EIP-712 signature must
     /// appear on every delegate response.
-    pub fn new(
-        base_url: String,
-        public_key: PublicKey,
-        kms_signer_address: Address,
-    ) -> Result<Self, Error> {
+    pub fn new(base_url: String, kms_signer_address: Address) -> Result<Self, Error> {
         let client = Client::builder().build().map_err(Error::ClientBuild)?;
 
-        info!(
-            kms_public_key = %hex::encode(public_key.to_sec1_bytes()),
-            kms_signer_address = %kms_signer_address,
-            "KMS client initialized"
-        );
+        info!(kms_signer_address = %kms_signer_address, "KMS client initialized");
 
         Ok(Self {
             client,
             base_url: base_url.trim_end_matches('/').to_string(),
-            public_key,
             kms_signer_address,
         })
     }
