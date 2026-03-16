@@ -250,7 +250,7 @@ pub async fn public_decrypt(
     State(state): State<AppState>,
 ) -> Result<Json<PublicDecryptResponse>, AppError> {
     let handle_b256 = parse_handle(&handle)?;
-    SolidityType::try_from(handle_b256[30])?;
+    SolidityType::try_from(handle_b256[5])?;
 
     info!(handle = %handle, "public_decrypt query");
 

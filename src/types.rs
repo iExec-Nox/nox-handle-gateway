@@ -7,8 +7,13 @@ use serde::Deserialize;
 
 use crate::error::AppError;
 
-/// Current handle version encoded in byte 31.
+/// Current handle version encoded in byte 0.
 const HANDLE_VERSION: u8 = 0x00; // V0
+/// Handle attribute: handle is guaranteed unique on this chain.
+///
+/// All gateway-created handles carry this flag because the prehandle is
+/// cryptographically random (OsRng), making collisions astronomically unlikely.
+pub const ATTR_IS_UNIQ_HANDLE: u8 = 0x01;
 /// EIP-712 domain version shared across all domains in this service.
 pub const EIP_712_DOMAIN_VERSION: &str = "1";
 /// EIP-712 domain name used for `DelegateAuthorization` and `DelegateResponseProof`.
@@ -16,7 +21,7 @@ pub const PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME: &str = "ProtocolDelegate";
 
 /// Solidity value type for an encrypted handle.
 ///
-/// Encoded as a single byte in position 30 of the handle:
+/// Encoded as a single byte in position 5 of the handle:
 /// - `0-3`: special types (bool, address, bytes, string)
 /// - `4-35`: uint8..uint256
 /// - `36-67`: int8..int256
@@ -157,39 +162,43 @@ impl<'de> Deserialize<'de> for SolidityType {
 /// 32-byte opaque handle identifying an encrypted value.
 ///
 /// Layout:
-/// - `[0-25]`  prehandle: 26 random bytes (OsRng)
-/// - `[26-29]` chain_id (big-endian u32)
-/// - `[30]`    solidity_type byte (see [`SolidityType::to_byte`])
-/// - `[31]`    version (currently `0x00`)
+/// - `[0]`     version (currently `0x00`)
+/// - `[1-4]`   chain_id (big-endian u32)
+/// - `[5]`     solidity_type byte (see [`SolidityType::to_byte`])
+/// - `[6]`     attrs (see [`ATTR_IS_UNIQ_HANDLE`])
+/// - `[7-31]`  prehandle: 25 random bytes (OsRng)
 #[derive(Debug)]
 pub struct Handle {
-    pub prehandle: [u8; 26],
+    pub version: u8,
     pub chain_id: [u8; 4],
     pub solidity_type: u8,
-    pub version: u8,
+    pub attrs: u8,
+    pub prehandle: [u8; 25],
 }
 
 impl Handle {
     /// Creates a new handle with a cryptographically random prehandle.
     pub fn new(chain_id: u32, solidity_type: SolidityType) -> Self {
-        let mut prehandle = [0u8; 26];
+        let mut prehandle = [0u8; 25];
         OsRng.fill_bytes(&mut prehandle);
 
         Handle {
-            prehandle,
+            version: HANDLE_VERSION,
             chain_id: chain_id.to_be_bytes(),
             solidity_type: solidity_type.to_byte(),
-            version: HANDLE_VERSION,
+            attrs: ATTR_IS_UNIQ_HANDLE,
+            prehandle,
         }
     }
 
     /// Serializes the handle into its canonical 32-byte form.
     pub fn to_bytes(&self) -> [u8; 32] {
         let mut bytes = [0u8; 32];
-        bytes[0..26].copy_from_slice(&self.prehandle);
-        bytes[26..30].copy_from_slice(&self.chain_id);
-        bytes[30] = self.solidity_type;
-        bytes[31] = self.version;
+        bytes[0] = self.version;
+        bytes[1..5].copy_from_slice(&self.chain_id);
+        bytes[5] = self.solidity_type;
+        bytes[6] = self.attrs;
+        bytes[7..32].copy_from_slice(&self.prehandle);
         bytes
     }
 }
