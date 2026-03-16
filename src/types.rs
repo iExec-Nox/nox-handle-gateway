@@ -172,7 +172,7 @@ impl TryFrom<u8> for SolidityType {
             // bytes1-bytes32: byte = 67 + size  →  size = byte − 67
             68..=99 => Ok(SolidityType::FixedBytes(byte - 67)),
             _ => Err(AppError::BadRequest(format!(
-                "unknown SolidityType byte: {byte:#04x}"
+                "unknown SolidityType byte: {byte:#02x} = {byte}"
             ))),
         }
     }
