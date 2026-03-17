@@ -1,3 +1,4 @@
+use std::fmt;
 use std::str::FromStr;
 
 use alloy_primitives::hex;
@@ -142,6 +143,20 @@ impl TryFrom<u8> for SolidityType {
             _ => Err(AppError::BadRequest(format!(
                 "unknown SolidityType byte: {byte:#02x} = {byte}"
             ))),
+        }
+    }
+}
+
+impl fmt::Display for SolidityType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SolidityType::Bool => write!(f, "bool"),
+            SolidityType::Address => write!(f, "address"),
+            SolidityType::Bytes => write!(f, "bytes"),
+            SolidityType::String => write!(f, "string"),
+            SolidityType::Uint(bits) => write!(f, "uint{bits}"),
+            SolidityType::Int(bits) => write!(f, "int{bits}"),
+            SolidityType::FixedBytes(n) => write!(f, "bytes{n}"),
         }
     }
 }
