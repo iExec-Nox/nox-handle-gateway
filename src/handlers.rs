@@ -168,7 +168,7 @@ pub async fn get_handle_crypto_material(
 
     let payload = authorization.payload;
 
-    let validity_window = match (payload.expiresAt.checked_sub(payload.notBefore)) {
+    let validity_window = match payload.expiresAt.checked_sub(payload.notBefore) {
         Some(window) => window,
         None => {
             warn!(
