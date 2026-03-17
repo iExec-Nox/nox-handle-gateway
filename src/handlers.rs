@@ -33,6 +33,8 @@ use crate::validation::{decode_and_validate_value, parse_handle};
 const NOX_COMPUTE_EIP712_DOMAIN_NAME: &str = "NoxCompute";
 /// EIP-712 domain name for DataAccessAuthorization validation.
 const HANDLE_GATEWAY_EIP712_DOMAIN_NAME: &str = "Handle Gateway";
+/// Maximum allowed validity window for DataAccessAuthorization tokens, in seconds.
+const MAX_AUTHORIZATION_VALIDITY_WINDOW_SECS: u64 = 3600;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -165,6 +167,30 @@ pub async fn get_handle_crypto_material(
         serde_json::from_slice(&token_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
 
     let payload = authorization.payload;
+
+    let validity_window = match payload.expiresAt.checked_sub(payload.notBefore) {
+        Some(window) => window,
+        None => {
+            warn!(
+                not_before = format_timestamp(payload.notBefore),
+                expires_at = format_timestamp(payload.expiresAt),
+                "token validity window is invalid",
+            );
+            return Err(AppError::Unauthorized(
+                "token validity window is invalid".to_string(),
+            ));
+        }
+    };
+    if validity_window > U256::from(MAX_AUTHORIZATION_VALIDITY_WINDOW_SECS) {
+        warn!(
+            not_before = format_timestamp(payload.notBefore),
+            expires_at = format_timestamp(payload.expiresAt),
+            "token validity window is too long",
+        );
+        return Err(AppError::Unauthorized(
+            "token validity window is too long".to_string(),
+        ));
+    }
 
     let now = U256::from(Utc::now().timestamp());
     if now < payload.notBefore || payload.expiresAt <= now {
