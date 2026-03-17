@@ -168,10 +168,19 @@ pub async fn get_handle_crypto_material(
 
     let payload = authorization.payload;
 
-    let validity_window = payload
-        .expiresAt
-        .checked_sub(payload.notBefore)
-        .unwrap_or_default();
+    let validity_window = match (payload.expiresAt.checked_sub(payload.notBefore)) {
+        Some(window) => window,
+        None => {
+            warn!(
+                not_before = format_timestamp(payload.notBefore),
+                expires_at = format_timestamp(payload.expiresAt),
+                "token validity window is invalid",
+            );
+            return Err(AppError::Unauthorized(
+                "token validity window is invalid".to_string(),
+            ));
+        }
+    };
     if validity_window > U256::from(MAX_AUTHORIZATION_VALIDITY_WINDOW_SECS) {
         warn!(
             not_before = format_timestamp(payload.notBefore),
