@@ -72,8 +72,7 @@ impl AppError {
             AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::StorageError(e) => match e {
                 repository::S3Error::NotFound { .. } => StatusCode::NOT_FOUND,
-                repository::S3Error::AlreadyExists { .. }
-                | repository::S3Error::BatchConflict { .. } => StatusCode::CONFLICT,
+                repository::S3Error::AlreadyExists { .. } => StatusCode::CONFLICT,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
