@@ -231,6 +231,7 @@ sol! {
     /// Signed under the NoxCompute domain (same as [`HandleProof`]).
     #[derive(Debug)]
     struct DecryptionProof {
+        bytes32 handle;
         bytes decryptedResult;
     }
 }
