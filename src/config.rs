@@ -126,7 +126,9 @@ impl Config {
                 Environment::with_prefix("NOX_HANDLE_GATEWAY")
                     .prefix_separator("_")
                     .separator("__")
-                    .try_parsing(true),
+                    .try_parsing(true)
+                    .list_separator(",")
+                    .with_list_parse_key("server.cors_allowed_headers"),
             )
             .add_source(EnvironmentSecretFile::with_prefix("NOX_HANDLE_GATEWAY").separator("_"))
             .build()?;
