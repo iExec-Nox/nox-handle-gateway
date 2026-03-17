@@ -287,6 +287,7 @@ pub async fn public_decrypt(
         verifying_contract: state.config.chain.nox_compute_contract,
     };
     let proof_struct = DecryptionProof {
+        handle: handle_b256,
         decryptedResult: Bytes::from(decrypted_result.clone()),
     };
     let signature = state
