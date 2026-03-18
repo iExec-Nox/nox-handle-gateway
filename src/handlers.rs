@@ -53,7 +53,6 @@ pub struct HandleResponse {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublicDecryptResponse {
-    pub handle: String,
     pub decryption_proof: String,
 }
 
@@ -317,7 +316,6 @@ pub async fn public_decrypt(
     serialized.extend_from_slice(&decrypted_result);
 
     Ok(Json(PublicDecryptResponse {
-        handle,
         decryption_proof: hex::encode_prefixed(serialized),
     }))
 }
