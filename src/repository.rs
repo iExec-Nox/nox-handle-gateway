@@ -73,9 +73,11 @@ pub struct HandleEntry {
 /// available for external inspection (e.g. via `HeadObject`) without
 /// downloading the object body.
 ///
-/// `created-at` and `content-sha256` are **not** included here; they are
-/// computed and inserted by [`DataRepository::create_handle`] itself.
+/// `content-sha256` is **not** included here; it is computed and inserted
+/// by [`DataRepository::create_handle`] itself.
 pub struct HandleS3Metadata {
+    pub handle: String,
+    pub created_at: NaiveDateTime,
     pub chain_id: u32,
     pub data_type: String,
     pub origin: String,
@@ -87,6 +89,8 @@ pub struct HandleS3Metadata {
 impl HandleS3Metadata {
     fn to_metadata_map(&self) -> HashMap<String, String> {
         HashMap::from([
+            ("handle".to_string(), self.handle.clone()),
+            ("created-at".to_string(), self.created_at.to_string()),
             ("chain-id".to_string(), self.chain_id.to_string()),
             ("data-type".to_string(), self.data_type.clone()),
             ("origin".to_string(), self.origin.clone()),
@@ -249,9 +253,7 @@ impl DataRepository {
         &self,
         entry: &HandleEntry,
         s3_metadata: &HandleS3Metadata,
-    ) -> Result<NaiveDateTime, S3Error> {
-        let created_at = Utc::now().naive_utc();
-
+    ) -> Result<(), S3Error> {
         let data = serde_json::to_vec(entry).map_err(|e| S3Error::S3Operation {
             message: format!("Failed to serialize entry: {e}"),
         })?;
@@ -261,8 +263,6 @@ impl DataRepository {
         let sha256 = format!("{:x}", hasher.finalize());
 
         let mut metadata = s3_metadata.to_metadata_map();
-        metadata.insert("handle".to_string(), entry.handle.clone());
-        metadata.insert("created-at".to_string(), created_at.to_string());
         metadata.insert(METADATA_CONTENT_SHA256.to_string(), sha256);
 
         let mut request = self
@@ -303,7 +303,7 @@ impl DataRepository {
             "handle stored in S3",
         );
 
-        Ok(created_at)
+        Ok(())
     }
 
     /// HEAD-checks a handle key and returns its stored `handle-value-tag` metadata.
@@ -387,6 +387,8 @@ impl DataRepository {
                         nonce: entry_with_tag.nonce,
                     };
                     let s3_metadata = HandleS3Metadata {
+                        handle: entry_with_tag.handle.clone(),
+                        created_at: Utc::now().naive_utc(),
                         chain_id,
                         data_type,
                         origin: origin.to_string(),

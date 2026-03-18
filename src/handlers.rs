@@ -111,6 +111,8 @@ pub async fn create_handle(
     };
 
     let metadata = HandleS3Metadata {
+        handle: serialized_handle.clone(),
+        created_at: Utc::now().naive_utc(),
         chain_id: state.config.chain.id,
         data_type,
         origin: "gateway".to_string(),
@@ -119,7 +121,7 @@ pub async fn create_handle(
         application_contract: request.application_contract.to_string(),
     };
 
-    let created_at_dt = state.repository.create_handle(&entry, &metadata).await?;
+    state.repository.create_handle(&entry, &metadata).await?;
 
     // HandleProof
     let domain = eip712_domain! {
@@ -129,7 +131,7 @@ pub async fn create_handle(
         verifying_contract: state.config.chain.nox_compute_contract,
     };
 
-    let created_at = U256::from(created_at_dt.and_utc().timestamp());
+    let created_at = U256::from(metadata.created_at.and_utc().timestamp());
     let proof = HandleProof {
         handle: B256::from(&handle),
         owner: request.owner,
