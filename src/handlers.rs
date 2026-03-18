@@ -4,8 +4,6 @@
 //! User interactions, specifically the access to encrypted data
 //! held by a handle are verified against on-chain ACL.
 
-use std::collections::HashMap;
-
 use alloy_primitives::{Address, B256, Bytes, U256, hex, keccak256};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
@@ -392,6 +390,21 @@ sol! {
     struct ResultPublishingReport {
         string message;
     }
+
+    /// Resolution status of a single handle within a [`HandleStatusReport`].
+    #[derive(Serialize)]
+    struct HandleResolution {
+        string handle;
+        bool resolved;
+    }
+
+    /// EIP-712 signed payload carrying the resolution status of a batch of handles.
+    ///
+    /// Signed under the `Handle Gateway` domain and returned by `POST /v0/public/handles/status`.
+    #[derive(Serialize)]
+    struct HandleStatusReport {
+        HandleResolution[] statuses;
+    }
 }
 
 /// Full authorization data to retrieve compute operands from the Handle Gateway.
@@ -660,40 +673,51 @@ pub struct HandleStatusRequest {
     handles: Vec<String>,
 }
 
-/// Resolution status of a single handle.
-///
-/// `resolved` is `true` when the handle's encrypted entry is present in S3,
-/// meaning it has been computed and stored. `false` means the key does not
-/// exist yet — either the computation is pending or the handle is unknown.
-#[derive(Debug, Serialize)]
-pub struct HandleStatus {
-    resolved: bool,
+/// Response for `POST /v0/public/handles/status` — carries signed [`HandleStatusReport`].
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HandleStatusReportResponse {
+    payload: HandleStatusReport,
+    signature: String,
 }
 
 /// Reports which handles from the request are already resolved (stored in S3).
 ///
-/// Each entry in the response map corresponds to one handle from the request.
-/// The `resolved` field is `true` if the handle exists in S3, `false` otherwise.
-/// The endpoint performs HEAD checks only and never returns the encrypted payload.
+/// Each entry in the response corresponds to one handle from the request, in
+/// the same order. The endpoint performs HEAD checks only and never returns
+/// the encrypted payload. The response is signed under the `Handle Gateway`
+/// EIP-712 domain so callers can verify it originates from this gateway.
 ///
 /// # HTTP responses
 ///
-/// - `200 OK` — JSON object mapping each requested handle to its `{ "resolved": bool }` status.
+/// - `200 OK` — JSON object `{ "payload": { "statuses": [{ "handle", "resolved" }] }, "signature": "0x..." }`.
 /// - `500 Internal Server Error` — unexpected S3 error (e.g. network failure or permission error).
 pub async fn handle_status(
     State(state): State<AppState>,
     Json(request): Json<HandleStatusRequest>,
-) -> Result<Json<HashMap<String, HandleStatus>>, AppError> {
+) -> Result<Json<HandleStatusReportResponse>, AppError> {
     info!(count = request.handles.len(), "handle status request");
-    let response = state
-        .repository
-        .handles_exist(&request.handles)
-        .await?
-        .into_iter()
-        .map(|(h, resolved)| (h, HandleStatus { resolved }))
+    let exists_map = state.repository.handles_exist(&request.handles).await?;
+    let statuses: Vec<HandleResolution> = request
+        .handles
+        .iter()
+        .map(|h| HandleResolution {
+            handle: h.clone(),
+            resolved: *exists_map.get(h).unwrap_or(&false),
+        })
         .collect();
-
-    Ok(Json(response))
+    let payload = HandleStatusReport { statuses };
+    let domain = eip712_domain! {
+        name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
+        version: "1",
+        chain_id: u64::from(state.config.chain.id),
+    };
+    let signature = state
+        .signer
+        .sign_typed_data_sync(&payload, &domain)
+        .map_err(|e| AppError::SigningError(e.to_string()))?
+        .to_string();
+    Ok(Json(HandleStatusReportResponse { payload, signature }))
 }
 
 /// Extracts authorization token from headers.
