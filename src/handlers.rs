@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use alloy_primitives::{Address, B256, Bytes, U256, hex};
+use alloy_primitives::{Address, B256, Bytes, U256, hex, keccak256};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolStruct, eip712_domain, sol};
@@ -25,7 +25,7 @@ use tracing::{debug, error, info, warn};
 use crate::application::AppState;
 use crate::error::AppError;
 use crate::kms::KmsClient;
-use crate::repository::HandleEntry;
+use crate::repository::{HandleEntry, HandleS3Metadata};
 use crate::types::{DataAccessAuthorization, DecryptionProof, Handle, HandleProof, SolidityType};
 use crate::validation::{decode_and_validate_value, parse_handle};
 
@@ -91,9 +91,17 @@ pub async fn create_handle(
     let plaintext = decode_and_validate_value(&request.value, &request.solidity_type)?;
     let ecies_ciphertext = state.crypto_svc.ecies_encrypt(&plaintext)?;
 
+    let data_type = request.solidity_type.to_string();
     let handle = Handle::new(state.config.chain.id, request.solidity_type).to_bytes();
 
     let serialized_handle = hex::encode_prefixed(handle);
+
+    let handle_value_tag = {
+        let mut input = Vec::with_capacity(handle.len() + plaintext.len());
+        input.extend_from_slice(&handle);
+        input.extend_from_slice(&plaintext);
+        hex::encode_prefixed(keccak256(input))
+    };
 
     let entry = HandleEntry {
         handle: serialized_handle.clone(),
@@ -102,7 +110,18 @@ pub async fn create_handle(
         nonce: hex::encode_prefixed(ecies_ciphertext.nonce),
     };
 
-    let created_at_dt = state.repository.create_handle(&entry).await?;
+    let metadata = HandleS3Metadata {
+        handle: serialized_handle.clone(),
+        created_at: Utc::now().naive_utc(),
+        chain_id: state.config.chain.id,
+        data_type,
+        origin: "gateway".to_string(),
+        is_public: false,
+        handle_value_tag,
+        application_contract: request.application_contract.to_string(),
+    };
+
+    state.repository.create_handle(&entry, &metadata).await?;
 
     // HandleProof
     let domain = eip712_domain! {
@@ -112,7 +131,7 @@ pub async fn create_handle(
         verifying_contract: state.config.chain.nox_compute_contract,
     };
 
-    let created_at = U256::from(created_at_dt.and_utc().timestamp());
+    let created_at = U256::from(metadata.created_at.and_utc().timestamp());
     let proof = HandleProof {
         handle: B256::from(&handle),
         owner: request.owner,
@@ -598,18 +617,29 @@ pub async fn publish_results(
         &authorization.signature,
     )?;
 
+    let total = handles.len();
     info!(
-        count = handles.len(),
+        count = total,
         chain_id = compute_result.chainId.to_string(),
         block_number = compute_result.blockNumber.to_string(),
         transaction_hash = compute_result.transactionHash.to_string(),
         "publishing result handles to S3"
     );
 
-    state.repository.create_handles(handles).await?;
+    let summary = state
+        .repository
+        .create_handles(
+            handles,
+            &compute_result.transactionHash,
+            &compute_result.caller.to_string(),
+        )
+        .await?;
 
     let payload = ResultPublishingReport {
-        message: "all handles were successfully published".to_string(),
+        message: format!(
+            "On the {total} handles submitted to publishing, {} were successfully created, {} were unchanged and {} conflicted",
+            summary.created, summary.unchanged, summary.conflicted
+        ),
     };
 
     let signature = state
