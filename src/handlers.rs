@@ -25,7 +25,7 @@ use tracing::{debug, error, info, warn};
 use crate::application::AppState;
 use crate::error::AppError;
 use crate::kms::KmsClient;
-use crate::repository::HandleEntry;
+use crate::repository::{HandleEntry, HandleS3Metadata};
 use crate::types::{DataAccessAuthorization, DecryptionProof, Handle, HandleProof, SolidityType};
 use crate::validation::{decode_and_validate_value, parse_handle};
 
@@ -108,6 +108,9 @@ pub async fn create_handle(
         ciphertext: hex::encode_prefixed(&ecies_ciphertext.ciphertext),
         public_key: hex::encode_prefixed(ecies_ciphertext.ephemeral_pubkey),
         nonce: hex::encode_prefixed(ecies_ciphertext.nonce),
+    };
+
+    let metadata = HandleS3Metadata {
         chain_id: state.config.chain.id,
         data_type,
         origin: "gateway".to_string(),
@@ -116,7 +119,7 @@ pub async fn create_handle(
         application_contract: request.application_contract.to_string(),
     };
 
-    let created_at_dt = state.repository.create_handle(&entry).await?;
+    let created_at_dt = state.repository.create_handle(&entry, &metadata).await?;
 
     // HandleProof
     let domain = eip712_domain! {

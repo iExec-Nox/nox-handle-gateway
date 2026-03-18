@@ -52,27 +52,55 @@ impl<E: std::error::Error + 'static, R: Debug> From<SdkError<E, R>> for S3Error 
     }
 }
 
-/// The complete handle entry stored as a JSON object in S3.
+/// The handle entry stored as a JSON object in S3.
 ///
-/// The S3 key is the `handle` field with a `0x` prefix. All fields are also
-/// stored as S3 user metadata for external inspection. `created-at` is the
-/// only metadata key NOT represented here — it is always set server-side
-/// inside [`DataRepository::create_handle`] via `Utc::now()`.
-///
-/// The SHA-256 stored in `content-sha256` metadata is computed from the
-/// JSON serialization of this struct, covering every stored field.
+/// The S3 key is `0x` + the `handle` hex string. Only the crypto material
+/// needed to serve decryption requests is stored in the body. Enrichment
+/// fields (chain ID, data type, origin, …) live exclusively in S3 user
+/// metadata via [`HandleS3Metadata`].
 #[derive(Clone, Deserialize, Serialize)]
 pub struct HandleEntry {
     pub handle: String,
     pub ciphertext: String,
     pub public_key: String,
     pub nonce: String,
+}
+
+/// S3 user-metadata attached to every stored handle object.
+///
+/// These fields are not part of the JSON body — they are written once at
+/// creation time via [`PutObjectFluentBuilder::set_metadata`] and are
+/// available for external inspection (e.g. via `HeadObject`) without
+/// downloading the object body.
+///
+/// `created-at` and `content-sha256` are **not** included here; they are
+/// computed and inserted by [`DataRepository::create_handle`] itself.
+pub struct HandleS3Metadata {
     pub chain_id: u32,
     pub data_type: String,
     pub origin: String,
     pub is_public: bool,
     pub handle_value_tag: String,
     pub application_contract: String,
+}
+
+impl HandleS3Metadata {
+    fn to_metadata_map(&self) -> HashMap<String, String> {
+        HashMap::from([
+            ("chain-id".to_string(), self.chain_id.to_string()),
+            ("data-type".to_string(), self.data_type.clone()),
+            ("origin".to_string(), self.origin.clone()),
+            ("public".to_string(), self.is_public.to_string()),
+            (
+                "handle-value-tag".to_string(),
+                self.handle_value_tag.clone(),
+            ),
+            (
+                "application-contract".to_string(),
+                self.application_contract.clone(),
+            ),
+        ])
+    }
 }
 
 /// Per-handle outcome counts from a batch publish operation.
@@ -217,7 +245,11 @@ impl DataRepository {
     /// and return [`S3Error::AlreadyExists`] even though the write was ours.
     /// Callers must treat [`S3Error::AlreadyExists`] on a fresh write as a
     /// possible false positive and verify the stored object if needed.
-    pub async fn create_handle(&self, entry: &HandleEntry) -> Result<NaiveDateTime, S3Error> {
+    pub async fn create_handle(
+        &self,
+        entry: &HandleEntry,
+        s3_metadata: &HandleS3Metadata,
+    ) -> Result<NaiveDateTime, S3Error> {
         let created_at = Utc::now().naive_utc();
 
         let data = serde_json::to_vec(entry).map_err(|e| S3Error::S3Operation {
@@ -228,6 +260,11 @@ impl DataRepository {
         hasher.update(&data);
         let sha256 = format!("{:x}", hasher.finalize());
 
+        let mut metadata = s3_metadata.to_metadata_map();
+        metadata.insert("handle".to_string(), entry.handle.clone());
+        metadata.insert("created-at".to_string(), created_at.to_string());
+        metadata.insert(METADATA_CONTENT_SHA256.to_string(), sha256);
+
         let mut request = self
             .client
             .put_object()
@@ -237,15 +274,7 @@ impl DataRepository {
             .content_type("application/octet-stream")
             .if_none_match("*")
             .checksum_algorithm(ChecksumAlgorithm::Crc64Nvme)
-            .metadata("handle", &entry.handle)
-            .metadata("created-at", created_at.to_string())
-            .metadata("chain-id", entry.chain_id.to_string())
-            .metadata("data-type", &entry.data_type)
-            .metadata("origin", &entry.origin)
-            .metadata("public", entry.is_public.to_string())
-            .metadata("handle-value-tag", &entry.handle_value_tag)
-            .metadata("application-contract", &entry.application_contract)
-            .metadata(METADATA_CONTENT_SHA256, sha256);
+            .set_metadata(Some(metadata));
 
         if self.object_lock_enabled {
             request = request
@@ -356,6 +385,8 @@ impl DataRepository {
                         ciphertext: entry_with_tag.ciphertext,
                         public_key: entry_with_tag.public_key,
                         nonce: entry_with_tag.nonce,
+                    };
+                    let s3_metadata = HandleS3Metadata {
                         chain_id,
                         data_type,
                         origin: origin.to_string(),
@@ -363,7 +394,7 @@ impl DataRepository {
                         handle_value_tag: entry_with_tag.handle_value_tag,
                         application_contract: application_contract.to_string(),
                     };
-                    match self.create_handle(&entry).await {
+                    match self.create_handle(&entry, &s3_metadata).await {
                         Ok(_) => {
                             summary.created += 1;
                         }
