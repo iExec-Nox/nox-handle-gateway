@@ -2,10 +2,13 @@ use alloy_signer_local::PrivateKeySigner;
 use axum::{
     Json, Router,
     extract::State,
-    http::HeaderName,
+    http::{HeaderName, StatusCode, Uri},
+    response::IntoResponse,
     routing::{get, post},
 };
-use axum_prometheus::PrometheusMetricLayer;
+use axum_prometheus::{
+    Handle, MakeDefaultHandle, PrometheusMetricLayer, PrometheusMetricLayerBuilder,
+};
 use chrono::Utc;
 use metrics_exporter_prometheus::PrometheusHandle;
 use serde_json::{Value, json};
@@ -19,6 +22,9 @@ use crate::handlers;
 use crate::kms::KmsClient;
 use crate::repository::DataRepository;
 use crate::rpc::NoxClient;
+
+const ENDPOINT_VERSION: &str = "/v0";
+const VERSIONED_PATHS: &str = "/v0/*path";
 
 /// Shared application state injected into every Axum handler via [`State`].
 #[derive(Clone)]
@@ -63,19 +69,23 @@ impl Application {
             .allow_headers(cors_allowed_headers)
             .allow_origin(tower_http::cors::Any);
 
+        let versioned_routes = Router::new()
+            .route("/compute/operands", get(handlers::get_operand_handles))
+            .route("/compute/results", post(handlers::publish_results))
+            .route("/public/{handle}", get(handlers::public_decrypt))
+            .route("/public/handles/status", post(handlers::handle_status))
+            .route("/secrets", post(handlers::create_handle))
+            .route(
+                "/secrets/{handle}",
+                get(handlers::get_handle_crypto_material),
+            );
+
         Router::new()
             .route("/", get(Self::root))
             .route("/health", get(Self::health_check))
             .route("/metrics", get(Self::metrics))
-            .route("/v0/compute/operands", get(handlers::get_operand_handles))
-            .route("/v0/compute/results", post(handlers::publish_results))
-            .route("/v0/public/{handle}", get(handlers::public_decrypt))
-            .route("/v0/public/handles/status", post(handlers::handle_status))
-            .route("/v0/secrets", post(handlers::create_handle))
-            .route(
-                "/v0/secrets/{handle}",
-                get(handlers::get_handle_crypto_material),
-            )
+            .nest(ENDPOINT_VERSION, versioned_routes)
+            .fallback(Self::not_found)
             .with_state(state)
             .layer(TraceLayer::new_for_http())
             .layer(cors)
@@ -119,7 +129,10 @@ impl Application {
             KmsClient::new(self.config.kms.url.clone(), self.config.kms.signer_address)?;
         let repository = DataRepository::new(&self.config.s3).await?;
 
-        let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
+        let prometheus_layer = PrometheusMetricLayerBuilder::new()
+            .with_allow_patterns(&["/", "/health", "/metrics", VERSIONED_PATHS])
+            .build();
+        let metrics_handle = Handle::make_default_handle(Handle::default());
         let state = AppState {
             nox_client,
             config: self.config.clone(),
@@ -159,6 +172,16 @@ impl Application {
     /// `GET /metrics` — renders Prometheus metrics as plain text.
     async fn metrics(State(state): State<AppState>) -> String {
         state.metrics_handle.render()
+    }
+
+    /// Fallback handler for non-existing routes.
+    ///
+    /// Returns 404 NOT_FOUND to indicate the requested route does not exist.
+    pub async fn not_found(uri: Uri) -> impl IntoResponse {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error":format!("Route not found {}", uri.path()) })),
+        )
     }
 
     /// Resolves when `SIGTERM` or `Ctrl+C` is received, triggering graceful shutdown.
