@@ -53,18 +53,18 @@ fn validate_size(bytes: &[u8], solidity_type: &SolidityType) -> Result<(), AppEr
             }
         }
         SolidityType::Uint(bits) => {
-            let max_bytes = (*bits / 8) as usize;
-            if len > max_bytes {
+            let expected = (*bits / 8) as usize;
+            if len != expected {
                 return Err(AppError::InvalidSolidityValue(format!(
-                    "uint{bits} must be <= {max_bytes} bytes, got {len}"
+                    "uint{bits} must be {expected} bytes, got {len}"
                 )));
             }
         }
         SolidityType::Int(bits) => {
-            let max_bytes = (*bits / 8) as usize;
-            if len > max_bytes {
+            let expected = (*bits / 8) as usize;
+            if len != expected {
                 return Err(AppError::InvalidSolidityValue(format!(
-                    "int{bits} must be <= {max_bytes} bytes, got {len}"
+                    "int{bits} must be {expected} bytes, got {len}"
                 )));
             }
         }
