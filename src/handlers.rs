@@ -230,22 +230,58 @@ pub async fn get_handle_crypto_material(
     let hash = payload.eip712_signing_hash(&domain);
     let signature_bytes =
         hex::decode(&authorization.signature).map_err(|e| AppError::Unauthorized(e.to_string()))?;
-    let signature =
-        Signature::from_raw(&signature_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
-    let recovered_address = signature
-        .recover_address_from_prehash(&hash)
-        .map_err(|e| AppError::Unauthorized(e.to_string()))?;
 
-    if payload.userAddress != recovered_address {
+    let is_valid_ec_sig = match Signature::from_raw(&signature_bytes) {
+        Ok(sig) => match sig.recover_address_from_prehash(&hash) {
+            Ok(address) => {
+                let is_valid = payload.userAddress == address;
+                if !is_valid {
+                    warn!(
+                        handle,
+                        user = payload.userAddress.to_string(),
+                        recovered = address.to_string(),
+                        "Recovered address does not match userAddress in payload",
+                    );
+                }
+                is_valid
+            }
+            Err(e) => {
+                warn!(
+                    handle,
+                    user = payload.userAddress.to_string(),
+                    "Failed to recover address from signature: {e}",
+                );
+                false
+            }
+        },
+        Err(e) => {
+            warn!(
+                handle,
+                user = payload.userAddress.to_string(),
+                "EC signature recovery failed: {e}",
+            );
+            false
+        }
+    };
+
+    if !is_valid_ec_sig {
         warn!(
+            handle,
             user = payload.userAddress.to_string(),
-            recovered = recovered_address.to_string(),
-            "recovered address mismatch — attempting ERC-1271 fallback",
+            "attempting ERC-1271 fallback",
         );
         state
             .nox_client
             .verify_erc1271(hash, &signature_bytes, payload.userAddress)
-            .await?;
+            .await
+            .map_err(|e| {
+                warn!(
+                    handle,
+                    user = payload.userAddress.to_string(),
+                    "ERC-1271 signature verification failed: {e}",
+                );
+                AppError::Unauthorized("invalid signature".to_string())
+            })?;
     }
 
     let handle_b256 = parse_handle(&handle)?;
