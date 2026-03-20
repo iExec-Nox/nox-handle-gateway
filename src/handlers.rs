@@ -237,6 +237,7 @@ pub async fn get_handle_crypto_material(
                 let is_valid = payload.userAddress == address;
                 if !is_valid {
                     warn!(
+                        handle,
                         user = payload.userAddress.to_string(),
                         recovered = address.to_string(),
                         "Recovered address does not match userAddress in payload",
@@ -246,6 +247,7 @@ pub async fn get_handle_crypto_material(
             }
             Err(e) => {
                 warn!(
+                    handle,
                     user = payload.userAddress.to_string(),
                     "Failed to recover address from signature: {e}",
                 );
@@ -254,6 +256,7 @@ pub async fn get_handle_crypto_material(
         },
         Err(e) => {
             warn!(
+                handle,
                 user = payload.userAddress.to_string(),
                 "EC signature recovery failed: {e}",
             );
@@ -263,6 +266,7 @@ pub async fn get_handle_crypto_material(
 
     if !is_valid_ec_sig {
         warn!(
+            handle,
             user = payload.userAddress.to_string(),
             "attempting ERC-1271 fallback",
         );
@@ -272,6 +276,7 @@ pub async fn get_handle_crypto_material(
             .await
             .map_err(|e| {
                 warn!(
+                    handle,
                     user = payload.userAddress.to_string(),
                     "ERC-1271 signature verification failed: {e}",
                 );
