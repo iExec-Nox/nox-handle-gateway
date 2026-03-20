@@ -97,7 +97,7 @@ impl Config {
     /// are also supported via `config_secret`.
     pub fn load() -> Result<Self, ConfigError> {
         let config = ConfigBuilder::builder()
-            .set_default("server.host", "0.0.0.0")?
+            .set_default("server.host", "127.0.0.1")?
             .set_default("server.port", 3000)?
             .set_default(
                 "server.cors_allowed_headers",
