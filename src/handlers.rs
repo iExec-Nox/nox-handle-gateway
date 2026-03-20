@@ -63,13 +63,12 @@ struct GatewayDelegateAuthorization {
     signature: String,
 }
 
-#[derive(Debug, Serialize)]
+/// Response for `GET /v0/secrets/{handle}` — carries signed [`HandleCryptoMaterial`].
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GatewayDelegateResponse {
-    handle: String,
-    ciphertext: String,
-    encrypted_shared_secret: String,
-    iv: String,
+    payload: HandleCryptoMaterial,
+    signature: String,
 }
 
 /// Encrypts a plaintext value and stores it under a freshly generated handle.
@@ -166,7 +165,7 @@ pub async fn create_handle(
 ///
 /// # HTTP responses
 ///
-/// - `200 OK` — JSON object `{ "handle", "ciphertext", "encryptedSharedSecret", "iv" }`.
+/// - `200 OK` — JSON object `{ "payload": { "handle", "ciphertext", "encryptedSharedSecret", "iv" }, "signature": "0x..." }`.
 /// - `400 Bad Request` — handle path parameter is not valid hex or not 32 bytes.
 /// - `401 Unauthorized` — authorization token is missing, malformed, expired, or wrongly signed.
 /// - `403 Forbidden` — caller does not have viewer access to this handle.
@@ -257,20 +256,29 @@ pub async fn get_handle_crypto_material(
     let entry = state.repository.fetch_handle(&handle).await?;
 
     info!(handle, "decryption delegation request");
-    let encrypted_shared_secret = state
-        .kms_client
-        .get_encrypted_shared_secret(
-            &entry.public_key,
-            &payload.encryptionPubKey,
-            &state.signer,
-            state.config.chain.id,
-        )
-        .await?;
+    let crypto_material = get_crypto_material_for_entry(
+        state.kms_client.clone(),
+        &entry,
+        &payload.encryptionPubKey,
+        &state.signer,
+        state.config.chain.id,
+    )
+    .await?;
+
+    let response_domain = eip712_domain! {
+        name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
+        version: "1",
+        chain_id: u64::from(state.config.chain.id),
+    };
+    let signature = state
+        .signer
+        .sign_typed_data_sync(&crypto_material, &response_domain)
+        .map_err(|e| AppError::SigningError(e.to_string()))?
+        .to_string();
+
     Ok(Json(GatewayDelegateResponse {
-        handle,
-        ciphertext: entry.ciphertext,
-        encrypted_shared_secret,
-        iv: entry.nonce,
+        payload: crypto_material,
+        signature,
     }))
 }
 
