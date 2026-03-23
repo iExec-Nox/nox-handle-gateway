@@ -24,7 +24,7 @@ use crate::repository::DataRepository;
 use crate::rpc::NoxClient;
 
 const ENDPOINT_VERSION: &str = "/v0";
-const VERSIONED_PATHS: &str = "/v0/*path";
+const VERSIONED_PATHS: &str = "/v0/{*path}";
 
 /// Shared application state injected into every Axum handler via [`State`].
 #[derive(Clone)]
