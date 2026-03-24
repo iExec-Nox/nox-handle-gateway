@@ -164,10 +164,10 @@ pub async fn create_handle(
         handle: serialized_handle,
         proof: serialized_handle_proof,
     };
-    let response_domain = handle_gateway_response_domain(state.config.chain.id, salt);
+    let domain = handle_gateway_response_domain(state.config.chain.id, salt);
     let handle_response_signature = state
         .signer
-        .sign_typed_data_sync(&handle_with_proof, &response_domain)
+        .sign_typed_data_sync(&handle_with_proof, &domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();
 
@@ -246,13 +246,13 @@ pub async fn get_handle_crypto_material(
         ));
     }
 
-    let domain = eip712_domain! {
+    let auth_domain = eip712_domain! {
         name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(state.config.chain.id),
         verifying_contract: state.config.chain.nox_compute_contract,
     };
-    let hash = payload.eip712_signing_hash(&domain);
+    let hash = payload.eip712_signing_hash(&auth_domain);
     let signature_bytes =
         hex::decode(&authorization.signature).map_err(|e| AppError::Unauthorized(e.to_string()))?;
 
@@ -392,7 +392,7 @@ pub async fn public_decrypt(
     )?;
 
     // Sign `DecryptionProof` EIP-712 under the `NoxCompute` domain
-    let domain = eip712_domain! {
+    let nox_compute_domain = eip712_domain! {
         name: NOX_COMPUTE_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(state.config.chain.id),
@@ -404,10 +404,11 @@ pub async fn public_decrypt(
     };
     let signature = state
         .signer
-        .sign_typed_data_sync(&proof_struct, &domain)
+        .sign_typed_data_sync(&proof_struct, &nox_compute_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .as_bytes();
 
+    // Serialize: sig (65 bytes) || decryptedResult (N bytes)
     let mut proof = Vec::with_capacity(65 + decrypted_result.len());
     proof.extend_from_slice(&signature);
     proof.extend_from_slice(&decrypted_result);
