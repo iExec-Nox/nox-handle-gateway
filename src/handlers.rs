@@ -409,12 +409,12 @@ pub async fn public_decrypt(
         .as_bytes();
 
     // Serialize: sig (65 bytes) || decryptedResult (N bytes)
-    let mut proof = Vec::with_capacity(65 + decrypted_result.len());
-    proof.extend_from_slice(&signature);
-    proof.extend_from_slice(&decrypted_result);
+    let mut serialized = Vec::with_capacity(65 + decrypted_result.len());
+    serialized.extend_from_slice(&signature);
+    serialized.extend_from_slice(&decrypted_result);
 
     let result_payload = PublicDecryptionResult {
-        decryptionProof: hex::encode_prefixed(proof),
+        decryptionProof: hex::encode_prefixed(serialized),
     };
     let response_domain = handle_gateway_response_domain(state.config.chain.id, salt);
     let public_decrypt_response_signature = state
