@@ -7,10 +7,10 @@
 use alloy_primitives::{Address, B256, Bytes, U256, hex, keccak256};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{SolStruct, eip712_domain, sol};
+use alloy_sol_types::{Eip712Domain, SolStruct, eip712_domain, sol};
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::header::HeaderMap,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -34,6 +34,15 @@ const HANDLE_GATEWAY_EIP712_DOMAIN_NAME: &str = "Handle Gateway";
 /// Maximum allowed validity window for DataAccessAuthorization tokens, in seconds.
 const MAX_AUTHORIZATION_VALIDITY_WINDOW_SECS: u64 = 3600;
 
+/// Optional `?salt=<0x bytes32>` query parameter present on all endpoints.
+///
+/// If absent the salt defaults to `bytes32(0)` and is bound into the Handle Gateway
+/// EIP-712 response-signing domain so callers can associate a response with a specific request.
+#[derive(Debug, Deserialize)]
+pub struct SaltQuery {
+    salt: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HandleRequest {
@@ -43,17 +52,19 @@ pub struct HandleRequest {
     application_contract: Address,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// Response for `POST /v0/secrets` — carries signed [`HandleWithProof`].
+#[derive(Serialize)]
 pub struct HandleResponse {
-    handle: String,
-    proof: String,
+    payload: HandleWithProof,
+    signature: String,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// Inner payload of `GET /v0/public/{handle}` response.
+/// Response for `GET /v0/public/{handle}` — carries signed [`PublicDecryptionResult`].
+#[derive(Serialize)]
 pub struct PublicDecryptResponse {
-    pub decryption_proof: String,
+    payload: PublicDecryptionResult,
+    signature: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,18 +85,21 @@ pub struct GatewayDelegateResponse {
 /// Encrypts a plaintext value and stores it under a freshly generated handle.
 ///
 /// Validates the `value` against `solidityType`, encrypts it under the KMS public key,
-/// stores the ciphertext in S3, and returns a signed EIP-712 `HandleProof`.
+/// stores the ciphertext in S3, and returns a signed EIP-712 `HandleProof` wrapped in
+/// a Handle Gateway outer signature.
 ///
 /// # HTTP responses
 ///
-/// - `200 OK` — JSON object `{ "handle": "0x...", "proof": "0x..." }`.
-/// - `400 Bad Request` — `value` does not match the declared `solidityType`.
+/// - `200 OK` — JSON `{ "payload": { "handle": "0x...", "proof": "0x..." }, "signature": "0x..." }`.
+/// - `400 Bad Request` — `value` does not match the declared `solidityType`, or `salt` is malformed.
 /// - `409 Conflict` — handle already exists in S3.
 /// - `500 Internal Server Error` — encryption, signing, or unexpected S3 error.
 pub async fn create_handle(
     State(state): State<AppState>,
+    Query(salt_query): Query<SaltQuery>,
     Json(request): Json<HandleRequest>,
 ) -> Result<Json<HandleResponse>, AppError> {
+    let salt = extract_salt(salt_query)?;
     // Handle
     let plaintext = decode_and_validate_value(&request.value, &request.solidity_type)?;
     let ecies_ciphertext = state.crypto_svc.ecies_encrypt(&plaintext)?;
@@ -138,18 +152,28 @@ pub async fn create_handle(
         createdAt: created_at,
     };
 
-    let signature = state
+    let handle_proof_signature = state
         .signer
         .sign_typed_data_sync(&proof, &domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .as_bytes();
 
-    let serialized_handle_proof = proof.to_serialized_bytes(signature);
+    let serialized_handle_proof = proof.to_serialized_bytes(handle_proof_signature);
 
-    // Response
-    Ok(Json(HandleResponse {
+    let handle_with_proof = HandleWithProof {
         handle: serialized_handle,
         proof: serialized_handle_proof,
+    };
+    let response_domain = handle_gateway_response_domain(state.config.chain.id, salt);
+    let handle_response_signature = state
+        .signer
+        .sign_typed_data_sync(&handle_with_proof, &response_domain)
+        .map_err(|e| AppError::SigningError(e.to_string()))?
+        .to_string();
+
+    Ok(Json(HandleResponse {
+        payload: handle_with_proof,
+        signature: handle_response_signature,
     }))
 }
 
@@ -175,8 +199,10 @@ pub async fn create_handle(
 pub async fn get_handle_crypto_material(
     Path(handle): Path<String>,
     State(state): State<AppState>,
+    Query(salt_query): Query<SaltQuery>,
     headers: HeaderMap,
 ) -> Result<Json<GatewayDelegateResponse>, AppError> {
+    let salt = extract_salt(salt_query)?;
     info!(handle = handle, "get_handle_crypto_material query");
     let token_bytes = extract_authorization(headers)?;
     let authorization: GatewayDelegateAuthorization =
@@ -301,11 +327,7 @@ pub async fn get_handle_crypto_material(
     )
     .await?;
 
-    let response_domain = eip712_domain! {
-        name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
-        version: "1",
-        chain_id: u64::from(state.config.chain.id),
-    };
+    let response_domain = handle_gateway_response_domain(state.config.chain.id, salt);
     let signature = state
         .signer
         .sign_typed_data_sync(&crypto_material, &response_domain)
@@ -321,13 +343,14 @@ pub async fn get_handle_crypto_material(
 /// Returns a verifiable EIP-712 decryption proof for a publicly decryptable handle.
 ///
 /// Checks handle format, on-chain public decryptability, and S3 existence (in that
-/// order) before performing decryption. The returned `decryptionProof` is the
-/// 65-byte gateway signature concatenated with the ABI-encoded decrypted value.
+/// order) before performing decryption. The `decryptionProof` field in the payload is
+/// the 65-byte NoxCompute EIP-712 gateway signature concatenated with the decrypted value.
+/// The outer `signature` signs the whole payload under the Handle Gateway domain with salt.
 ///
 /// # HTTP responses
 ///
-/// - `200 OK` — JSON `{ "handle": "0x...", "decryptionProof": "0x..." }`.
-/// - `400 Bad Request` — handle is not valid 32-byte hex.
+/// - `200 OK` — JSON `{ "payload": { "decryptionProof": "0x..." }, "signature": "0x..." }`.
+/// - `400 Bad Request` — handle is not valid 32-byte hex, or `salt` is malformed.
 /// - `403 Forbidden` — handle is not marked as publicly decryptable on-chain.
 /// - `404 Not Found` — handle does not exist in S3.
 /// - `500 Internal Server Error` — crypto or signing failure.
@@ -335,7 +358,9 @@ pub async fn get_handle_crypto_material(
 pub async fn public_decrypt(
     Path(handle): Path<String>,
     State(state): State<AppState>,
+    Query(salt_query): Query<SaltQuery>,
 ) -> Result<Json<PublicDecryptResponse>, AppError> {
+    let salt = extract_salt(salt_query)?;
     let handle_b256 = parse_handle(&handle)?;
     SolidityType::try_from(handle_b256[5])?;
 
@@ -383,13 +408,23 @@ pub async fn public_decrypt(
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .as_bytes();
 
-    // Serialize: sig (65 bytes) || decryptedResult (N bytes)
-    let mut serialized = Vec::with_capacity(65 + decrypted_result.len());
-    serialized.extend_from_slice(&signature);
-    serialized.extend_from_slice(&decrypted_result);
+    let mut proof = Vec::with_capacity(65 + decrypted_result.len());
+    proof.extend_from_slice(&signature);
+    proof.extend_from_slice(&decrypted_result);
+
+    let result_payload = PublicDecryptionResult {
+        decryptionProof: hex::encode_prefixed(proof),
+    };
+    let response_domain = handle_gateway_response_domain(state.config.chain.id, salt);
+    let public_decrypt_response_signature = state
+        .signer
+        .sign_typed_data_sync(&result_payload, &response_domain)
+        .map_err(|e| AppError::SigningError(e.to_string()))?
+        .to_string();
 
     Ok(Json(PublicDecryptResponse {
-        decryption_proof: hex::encode_prefixed(serialized),
+        payload: result_payload,
+        signature: public_decrypt_response_signature,
     }))
 }
 
@@ -402,6 +437,15 @@ fn format_timestamp(ts: U256) -> String {
 }
 
 sol! {
+    /// EIP-712 outer payload wrapping the handle and HandleProof returned by `POST /v0/secrets`.
+    ///
+    /// Signed under the Handle Gateway domain (with salt) to bind the response to the request.
+    #[derive(Serialize)]
+    struct HandleWithProof {
+        string handle;
+        string proof;
+    }
+
     /// EIP-712 compatible payload to authorize a Runner to retrieve operands from the Handle Gateway.
     ///
     /// The Handle Gateway will receive a [`ComputeOperandRequest`] and will be able to verify
@@ -449,6 +493,14 @@ sol! {
     #[derive(Serialize)]
     struct ComputeOperands {
         HandleCryptoMaterial[] operands;
+    }
+
+    /// EIP-712 outer payload wrapping the decryption proof returned by `GET /v0/public/{handle}`.
+    ///
+    /// Signed under the Handle Gateway domain (with salt) to bind the response to the request.
+    #[derive(Serialize)]
+    struct PublicDecryptionResult {
+        string decryptionProof;
     }
 
     /// EIP-712 compatible payload to sign and send a result publishing report to the Runner.
@@ -548,19 +600,21 @@ pub struct ComputeResultResponse {
 ///   either due to an operand not retrieved from S3 or not prepared through the KMS.
 pub async fn get_operand_handles(
     State(state): State<AppState>,
+    Query(salt_query): Query<SaltQuery>,
     headers: HeaderMap,
 ) -> Result<Json<ComputeOperandResponse>, AppError> {
+    let salt = extract_salt(salt_query)?;
     let token_bytes = extract_authorization(headers)?;
     let authorization: ComputeOperandRequest =
         serde_json::from_slice(&token_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
 
-    let domain = eip712_domain! {
+    let auth_domain = eip712_domain! {
         name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(state.config.chain.id),
     };
     let compute_request = authorization.payload;
-    let hash = compute_request.eip712_signing_hash(&domain);
+    let hash = compute_request.eip712_signing_hash(&auth_domain);
     recover_and_check_address(
         &state.config.runner_address,
         &hash,
@@ -633,9 +687,10 @@ pub async fn get_operand_handles(
         operands: operands_crypto_material,
     };
 
+    let response_domain = handle_gateway_response_domain(state.config.chain.id, salt);
     let signature = state
         .signer
-        .sign_typed_data_sync(&payload, &domain)
+        .sign_typed_data_sync(&payload, &response_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();
 
@@ -680,20 +735,22 @@ async fn get_crypto_material_for_entry(
 /// - [`super::repository::S3Error`] if an error occurs during publishing.
 pub async fn publish_results(
     State(state): State<AppState>,
+    Query(salt_query): Query<SaltQuery>,
     headers: HeaderMap,
     Json(handles): Json<Vec<HandleEntryWithTag>>,
 ) -> Result<Json<ComputeResultResponse>, AppError> {
+    let salt = extract_salt(salt_query)?;
     let token_bytes = extract_authorization(headers)?;
     let authorization: ComputeResultRequest =
         serde_json::from_slice(&token_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
 
-    let domain = eip712_domain! {
+    let auth_domain = eip712_domain! {
         name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(state.config.chain.id),
     };
     let compute_result = authorization.payload;
-    let hash = compute_result.eip712_signing_hash(&domain);
+    let hash = compute_result.eip712_signing_hash(&auth_domain);
     recover_and_check_address(
         &state.config.runner_address,
         &hash,
@@ -725,9 +782,10 @@ pub async fn publish_results(
         ),
     };
 
+    let response_domain = handle_gateway_response_domain(state.config.chain.id, salt);
     let signature = state
         .signer
-        .sign_typed_data_sync(&payload, &domain)
+        .sign_typed_data_sync(&payload, &response_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();
 
@@ -764,8 +822,10 @@ pub struct HandleStatusReportResponse {
 /// - `500 Internal Server Error` — unexpected S3 error (e.g. network failure or permission error).
 pub async fn handle_status(
     State(state): State<AppState>,
+    Query(salt_query): Query<SaltQuery>,
     Json(request): Json<HandleStatusRequest>,
 ) -> Result<Json<HandleStatusReportResponse>, AppError> {
+    let salt = extract_salt(salt_query)?;
     info!(count = request.handles.len(), "handle status request");
     let exists_map = state.repository.handles_exist(&request.handles).await?;
     let statuses: Vec<HandleResolution> = request
@@ -777,17 +837,45 @@ pub async fn handle_status(
         })
         .collect();
     let payload = HandleStatusReport { statuses };
-    let domain = eip712_domain! {
-        name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
-        version: "1",
-        chain_id: u64::from(state.config.chain.id),
-    };
+    let response_domain = handle_gateway_response_domain(state.config.chain.id, salt);
     let signature = state
         .signer
-        .sign_typed_data_sync(&payload, &domain)
+        .sign_typed_data_sync(&payload, &response_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();
     Ok(Json(HandleStatusReportResponse { payload, signature }))
+}
+
+/// Builds the Handle Gateway EIP-712 domain used to sign all gateway responses.
+///
+/// The `salt` parameter binds the signature to a specific request, preventing
+/// response replay across different callers or requests.
+fn handle_gateway_response_domain(chain_id: u32, salt: B256) -> Eip712Domain {
+    eip712_domain! {
+        name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
+        version: "1",
+        chain_id: u64::from(chain_id),
+        salt: salt,
+    }
+}
+
+/// Parses the optional `salt` query parameter into a 32-byte value.
+///
+/// Returns `B256::ZERO` when the parameter is absent. Returns `AppError::BadRequest`
+/// when the value is present but not a valid 0x-prefixed 64-hex-char string.
+fn extract_salt(query: SaltQuery) -> Result<B256, AppError> {
+    let Some(s) = query.salt else {
+        return Ok(B256::ZERO);
+    };
+    let s_len = s.len(); // 0x + 32 bytes = 66 hex chars
+    if s_len != 66 {
+        return Err(AppError::BadRequest(format!(
+            "salt must be a 0x-prefixed 32-byte hex string, got {s_len} hex chars"
+        )));
+    }
+    let bytes =
+        hex::decode(s).map_err(|e| AppError::BadRequest(format!("invalid salt hex: {e}")))?;
+    Ok(B256::from_slice(&bytes))
 }
 
 /// Extracts authorization token from headers.
