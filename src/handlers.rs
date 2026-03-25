@@ -868,8 +868,8 @@ fn extract_salt(query: SaltQuery) -> Result<B256, AppError> {
     let Some(s) = query.salt else {
         return Ok(B256::ZERO);
     };
-    let bytes = hex::decode(&s)
-        .map_err(|e| AppError::BadRequest(format!("invalid salt hex [salt: {s}]: {e}")))?;
+    let bytes =
+        hex::decode(&s).map_err(|e| AppError::BadRequest(format!("invalid salt hex {s}: {e}")))?;
     let bytes_len = bytes.len();
     if bytes_len != 32 {
         return Err(AppError::BadRequest(format!(
