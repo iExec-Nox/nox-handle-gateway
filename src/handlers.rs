@@ -862,20 +862,20 @@ fn handle_gateway_response_domain(chain_id: u32, salt: B256) -> Eip712Domain {
 
 /// Parses the optional `salt` query parameter into a 32-byte value.
 ///
-/// Returns `B256::ZERO` when the parameter is absent. Returns `AppError::BadRequest`
-/// when the value is present but not a valid 0x-prefixed 64-hex-char string.
+/// Returns `B256::ZERO` when the parameter is absent. When present, the value must
+/// be hex-decoded to exactly 32 bytes.
 fn extract_salt(query: SaltQuery) -> Result<B256, AppError> {
     let Some(s) = query.salt else {
         return Ok(B256::ZERO);
     };
-    let s_len = s.len(); // 0x + 32 bytes = 66 hex chars
-    if s_len != 66 {
+    let bytes = hex::decode(&s)
+        .map_err(|e| AppError::BadRequest(format!("invalid salt hex [salt: {s}]: {e}")))?;
+    let bytes_len = bytes.len();
+    if bytes_len != 32 {
         return Err(AppError::BadRequest(format!(
-            "salt must be a 0x-prefixed 32-byte hex string, got {s_len} hex chars"
+            "salt must decode to exactly 32 bytes, got {bytes_len} bytes",
         )));
     }
-    let bytes =
-        hex::decode(s).map_err(|e| AppError::BadRequest(format!("invalid salt hex: {e}")))?;
     Ok(B256::from_slice(&bytes))
 }
 
