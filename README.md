@@ -1,4 +1,4 @@
-# Nox · nox-handle-gateway
+# Nox · Handle Gateway
 
 [![License](https://img.shields.io/badge/license-BUSL--1.1-blue)](./LICENSE) [![Docs](https://img.shields.io/badge/docs-nox--protocol-purple)](https://docs.iex.ec) [![Discord](https://img.shields.io/badge/chat-Discord-5865F2)](https://discord.com/invite/5TewNUnJHN) [![Ship](https://img.shields.io/github/v/tag/iExec-Nox/nox-handle-gateway?label=ship)](https://github.com/iExec-Nox/nox-handle-gateway/releases)
 
@@ -6,7 +6,7 @@
 
 ## Table of Contents
 
-- [Nox · nox-handle-gateway](#nox--nox-handle-gateway)
+- [Nox · Handle Gateway](#nox--handle-gateway)
   - [Table of Contents](#table-of-contents)
   - [Overview](#overview)
   - [Prerequisites](#prerequisites)
@@ -583,7 +583,7 @@ struct DecryptionProof {
 
 | Repository | Role |
 | ---------- | ---- |
-| [nox-kms](https://github.com/iExec-Nox/nox-kms) | Key Management Service — holds the KMS private key, delegates re-encrypted material |
+| [nox-kms](https://github.com/iExec-Nox/nox-kms) | Key Management Service — performs ECDH/RSA delegation operations for authorized flows |
 | [nox-runner](https://github.com/iExec-Nox/nox-runner) | Off-chain computation runner — fetches operands and publishes results via this gateway |
 
 ---
