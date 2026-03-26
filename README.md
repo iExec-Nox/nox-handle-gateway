@@ -24,7 +24,6 @@
       - [`POST /v0/compute/results`](#post-v0computeresults)
       - [`POST /v0/public/handles/status`](#post-v0publichandlesstatus)
       - [`GET /v0/public/{handle}`](#get-v0publichandle)
-  - [Project Structure](#project-structure)
   - [Related Repositories](#related-repositories)
   - [License](#license)
 
@@ -576,27 +575,6 @@ struct DecryptionProof {
     bytes32 handle;
     bytes decryptedResult;
 }
-```
-
----
-
-## Project Structure
-
-```text
-.
-├── src/
-│   ├── application.rs   # Axum router and server lifecycle
-│   ├── config.rs        # Environment variable loading
-│   ├── crypto.rs        # ECIES encryption (secp256k1 + HKDF-SHA256 + AES-256-GCM)
-│   ├── error.rs         # AppError with HTTP status mapping
-│   ├── handlers.rs      # REST endpoint handlers
-│   ├── kms.rs           # KMS HTTP client (delegate endpoint)
-│   ├── main.rs          # Entry point
-│   ├── repository.rs    # S3 operations and startup validation
-│   ├── rpc.rs           # On-chain reads via NoxCompute
-│   ├── types.rs         # Handle, SolidityType, EIP-712 sol! types
-│   └── validation.rs    # Hex decode and size validation per SolidityType
-└── README.md
 ```
 
 ---
