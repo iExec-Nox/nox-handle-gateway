@@ -3325,7 +3325,7 @@ dependencies = [
 
 [[package]]
 name = "nox-handle-gateway"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "aes-gcm",
  "alloy-contract",
