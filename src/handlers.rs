@@ -15,7 +15,7 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{TimeZone, Utc};
-use futures::future::join_all;
+use futures_util::future::join_all;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};

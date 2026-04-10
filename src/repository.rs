@@ -17,7 +17,7 @@ use aws_sdk_s3::{
     types::{ChecksumAlgorithm, ObjectLockEnabled, ObjectLockMode},
 };
 use chrono::{NaiveDateTime, Utc};
-use futures::future::join_all;
+use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
