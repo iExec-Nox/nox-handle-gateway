@@ -364,7 +364,7 @@ impl DataRepository {
                         );
                         Ok(S3HandleCreationStatus::Unchanged)
                     }
-                    Err(e) => return Err(e),
+                    Err(e) => Err(e),
                 }
             }
             Some(stored_tag) if stored_tag == entry_with_tag.handle_value_tag => {
