@@ -3343,7 +3343,7 @@ dependencies = [
  "chrono",
  "config",
  "config-secret",
- "futures",
+ "futures-util",
  "hkdf",
  "k256",
  "metrics-exporter-prometheus",
