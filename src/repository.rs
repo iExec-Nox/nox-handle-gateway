@@ -315,9 +315,9 @@ impl DataRepository {
 
     /// Creates a single handle in S3 bucket if it does not exist.
     ///
-    /// For a single handle, a read is done to check if an handle exists.
-    /// If it does not exist, the handle is created.
-    /// If it exists, its metada are checked to see if the encrypted value is the same.
+    /// For the provided handle, [`Self::head_handle`] is called to check if it exists in S3.
+    /// The handle is created if it does not exist, the returned `handle-value-tag` metadata is checked otherwise.
+    /// If the metadata value is the same, the handle has already been reported, an error is reported otherwise.
     async fn create_handle_if_missing(
         &self,
         entry_with_tag: &HandleEntryWithTag,
