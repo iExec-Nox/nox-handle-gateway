@@ -17,6 +17,7 @@ use aws_sdk_s3::{
     types::{ChecksumAlgorithm, ObjectLockEnabled, ObjectLockMode},
 };
 use chrono::{NaiveDateTime, Utc};
+use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -40,6 +41,12 @@ pub enum S3Error {
     NotFound { key: String },
     #[error("S3 operation failed: {message}")]
     S3Operation { message: String },
+}
+
+pub enum S3HandleCreationStatus {
+    Created,
+    Conflicted,
+    Unchanged,
 }
 
 impl<E: std::error::Error + 'static, R: Debug> From<SdkError<E, R>> for S3Error {
@@ -306,6 +313,75 @@ impl DataRepository {
         Ok(())
     }
 
+    /// Creates a single handle in S3 bucket if it does not exist.
+    ///
+    /// For a single handle, a read is done to check if an handle exists.
+    /// If it does not exist, the handle is created.
+    /// If it exists, its metada are checked to see if the encrypted value is the same.
+    async fn create_handle_if_missing(
+        &self,
+        entry_with_tag: &HandleEntryWithTag,
+        origin: &str,
+        application_contract: &str,
+    ) -> Result<S3HandleCreationStatus, S3Error> {
+        let handle_bytes =
+            hex::decode(entry_with_tag.handle.clone()).map_err(|e| S3Error::S3Operation {
+                message: format!("invalid handle hex '{}': {e}", entry_with_tag.handle),
+            })?;
+        let data_type = SolidityType::try_from(handle_bytes[5])
+            .map(|t| t.to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        let is_public = handle_bytes[6] != 0x01;
+        let chain_id = u32::from_be_bytes(handle_bytes[1..5].try_into().map_err(|e| {
+            S3Error::S3Operation {
+                message: format!("invalid chain id: {e}"),
+            }
+        })?);
+        match self.head_handle(&entry_with_tag.handle).await? {
+            None => {
+                let entry = HandleEntry {
+                    handle: entry_with_tag.handle.clone(),
+                    ciphertext: entry_with_tag.ciphertext.clone(),
+                    public_key: entry_with_tag.public_key.clone(),
+                    nonce: entry_with_tag.nonce.clone(),
+                };
+                let s3_metadata = HandleS3Metadata {
+                    handle: entry_with_tag.handle.clone(),
+                    created_at: Utc::now().naive_utc(),
+                    chain_id,
+                    data_type,
+                    origin: origin.to_string(),
+                    is_public,
+                    handle_value_tag: entry_with_tag.handle_value_tag.clone(),
+                    application_contract: application_contract.to_string(),
+                };
+                match self.create_handle(&entry, &s3_metadata).await {
+                    Ok(_) => Ok(S3HandleCreationStatus::Created),
+                    Err(S3Error::AlreadyExists { key }) => {
+                        warn!(
+                            handle = %key,
+                            "handle already present in storage, counting as unchanged",
+                        );
+                        Ok(S3HandleCreationStatus::Unchanged)
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            Some(stored_tag) if stored_tag == entry_with_tag.handle_value_tag => {
+                Ok(S3HandleCreationStatus::Unchanged)
+            }
+            Some(stored_tag) => {
+                error!(
+                    handle = %entry_with_tag.handle,
+                    stored_tag = %stored_tag,
+                    incoming_tag = %entry_with_tag.handle_value_tag,
+                    "handle-value-tag mismatch, possible data integrity issue",
+                );
+                Ok(S3HandleCreationStatus::Conflicted)
+            }
+        }
+    }
+
     /// HEAD-checks a handle key and returns its stored `handle-value-tag` metadata.
     ///
     /// Returns `Ok(None)` if the key does not exist (404).
@@ -362,66 +438,17 @@ impl DataRepository {
             conflicted: 0,
         };
 
-        for entry_with_tag in entries {
-            // Decode handle bytes to extract data-type ([5]) and attrs ([6])
-            let handle_bytes =
-                hex::decode(entry_with_tag.handle.clone()).map_err(|e| S3Error::S3Operation {
-                    message: format!("invalid handle hex '{}': {e}", entry_with_tag.handle),
-                })?;
-            let data_type = SolidityType::try_from(handle_bytes[5])
-                .map(|t| t.to_string())
-                .unwrap_or_else(|_| "unknown".to_string());
-            let is_public = handle_bytes[6] != 0x01;
-            let chain_id = u32::from_be_bytes(handle_bytes[1..5].try_into().map_err(|e| {
-                S3Error::S3Operation {
-                    message: format!("invalid chain id: {e}"),
-                }
-            })?);
+        let creation_result = join_all(entries.iter().map(|entry_with_tag| {
+            self.create_handle_if_missing(entry_with_tag, origin, application_contract)
+        }))
+        .await;
 
-            match self.head_handle(&entry_with_tag.handle).await? {
-                None => {
-                    let entry = HandleEntry {
-                        handle: entry_with_tag.handle.clone(),
-                        ciphertext: entry_with_tag.ciphertext,
-                        public_key: entry_with_tag.public_key,
-                        nonce: entry_with_tag.nonce,
-                    };
-                    let s3_metadata = HandleS3Metadata {
-                        handle: entry_with_tag.handle.clone(),
-                        created_at: Utc::now().naive_utc(),
-                        chain_id,
-                        data_type,
-                        origin: origin.to_string(),
-                        is_public,
-                        handle_value_tag: entry_with_tag.handle_value_tag,
-                        application_contract: application_contract.to_string(),
-                    };
-                    match self.create_handle(&entry, &s3_metadata).await {
-                        Ok(_) => {
-                            summary.created += 1;
-                        }
-                        Err(S3Error::AlreadyExists { key }) => {
-                            warn!(
-                                handle = %key,
-                                "handle already present in storage, counting as unchanged",
-                            );
-                            summary.unchanged += 1;
-                        }
-                        Err(e) => return Err(e),
-                    }
-                }
-                Some(stored_tag) if stored_tag == entry_with_tag.handle_value_tag => {
-                    summary.unchanged += 1;
-                }
-                Some(stored_tag) => {
-                    error!(
-                        handle = %entry_with_tag.handle,
-                        stored_tag = %stored_tag,
-                        incoming_tag = %entry_with_tag.handle_value_tag,
-                        "handle-value-tag mismatch, possible data integrity issue",
-                    );
-                    summary.conflicted += 1;
-                }
+        for result in creation_result {
+            match result {
+                Ok(S3HandleCreationStatus::Created) => summary.created += 1,
+                Ok(S3HandleCreationStatus::Conflicted) => summary.conflicted += 1,
+                Ok(S3HandleCreationStatus::Unchanged) => summary.unchanged += 1,
+                Err(e) => return Err(e),
             }
         }
 
@@ -469,8 +496,10 @@ impl DataRepository {
     /// error. Any other S3 error (network, permissions) is propagated immediately.
     pub async fn read_handles(&self, ids: &[String]) -> Result<Vec<HandleEntry>, S3Error> {
         let mut results = Vec::with_capacity(ids.len());
-        for id in ids {
-            match self.fetch_handle(id).await {
+        let fetch_handle_results = join_all(ids.iter().map(|id| self.fetch_handle(id))).await;
+
+        for fetch_handle_result in fetch_handle_results {
+            match fetch_handle_result {
                 Ok(entry) => results.push(entry),
                 Err(S3Error::NotFound { .. }) => {}
                 Err(e) => return Err(e),
