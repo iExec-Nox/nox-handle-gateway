@@ -17,7 +17,7 @@ use aws_sdk_s3::{
     types::{ChecksumAlgorithm, ObjectLockEnabled, ObjectLockMode},
 };
 use chrono::{NaiveDateTime, Utc};
-use futures_util::future::join_all;
+use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -127,6 +127,7 @@ pub struct PublishSummary {
 pub struct DataRepository {
     client: Client,
     bucket: String,
+    max_concurrent_requests: usize,
     object_lock_enabled: bool,
 }
 
@@ -168,6 +169,7 @@ impl DataRepository {
         let repo = Self {
             client: Client::from_conf(s3_config),
             bucket: config.bucket.clone(),
+            max_concurrent_requests: config.max_concurrent_requests,
             object_lock_enabled: config.object_lock_enabled,
         };
 
@@ -438,10 +440,22 @@ impl DataRepository {
             conflicted: 0,
         };
 
-        let creation_result = join_all(entries.iter().map(|entry_with_tag| {
-            self.create_handle_if_missing(entry_with_tag, origin, application_contract)
-        }))
-        .await;
+        let repo = self.clone();
+        let origin = origin.to_string();
+        let application_contract = application_contract.to_string();
+        let creation_result: Vec<_> = stream::iter(entries.into_iter())
+            .map(|entry_with_tag| {
+                let repo = repo.clone();
+                let origin = origin.clone();
+                let application_contract = application_contract.clone();
+                async move {
+                    repo.create_handle_if_missing(&entry_with_tag, &origin, &application_contract)
+                        .await
+                }
+            })
+            .buffer_unordered(repo.max_concurrent_requests)
+            .collect()
+            .await;
 
         for result in creation_result {
             match result {
@@ -496,7 +510,16 @@ impl DataRepository {
     /// error. Any other S3 error (network, permissions) is propagated immediately.
     pub async fn read_handles(&self, ids: &[String]) -> Result<Vec<HandleEntry>, S3Error> {
         let mut results = Vec::with_capacity(ids.len());
-        let fetch_handle_results = join_all(ids.iter().map(|id| self.fetch_handle(id))).await;
+        let repo = self.clone();
+        let owned_ids: Vec<String> = ids.to_vec();
+        let fetch_handle_results: Vec<_> = stream::iter(owned_ids)
+            .map(|id| {
+                let repo = repo.clone();
+                async move { repo.fetch_handle(&id).await }
+            })
+            .buffer_unordered(repo.max_concurrent_requests)
+            .collect()
+            .await;
 
         for fetch_handle_result in fetch_handle_results {
             match fetch_handle_result {
