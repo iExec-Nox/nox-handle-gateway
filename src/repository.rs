@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use alloy_primitives::hex;
@@ -17,10 +18,11 @@ use aws_sdk_s3::{
     types::{ChecksumAlgorithm, ObjectLockEnabled, ObjectLockMode},
 };
 use chrono::{NaiveDateTime, Utc};
-use futures_util::stream::{self, StreamExt};
+use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
 
 use crate::config::S3Config;
@@ -127,7 +129,7 @@ pub struct PublishSummary {
 pub struct DataRepository {
     client: Client,
     bucket: String,
-    max_concurrent_requests: usize,
+    semaphore: Arc<Semaphore>,
     object_lock_enabled: bool,
 }
 
@@ -169,7 +171,7 @@ impl DataRepository {
         let repo = Self {
             client: Client::from_conf(s3_config),
             bucket: config.bucket.clone(),
-            max_concurrent_requests: config.max_concurrent_requests,
+            semaphore: Arc::new(Semaphore::new(config.max_concurrent_requests)),
             object_lock_enabled: config.object_lock_enabled,
         };
 
@@ -443,19 +445,23 @@ impl DataRepository {
         let repo = self.clone();
         let origin = origin.to_string();
         let application_contract = application_contract.to_string();
-        let creation_result: Vec<_> = stream::iter(entries.into_iter())
-            .map(|entry_with_tag| {
-                let repo = repo.clone();
-                let origin = origin.clone();
-                let application_contract = application_contract.clone();
-                async move {
-                    repo.create_handle_if_missing(&entry_with_tag, &origin, &application_contract)
-                        .await
-                }
-            })
-            .buffer_unordered(repo.max_concurrent_requests)
-            .collect()
-            .await;
+        let creation_result: Vec<_> = join_all(entries.into_iter().map(|entry_with_tag| {
+            let repo = repo.clone();
+            let origin = origin.clone();
+            let application_contract = application_contract.clone();
+            async move {
+                let _permit = repo
+                    .semaphore
+                    .acquire()
+                    .await
+                    .map_err(|e| S3Error::S3Operation {
+                        message: format!("semaphore error: {e}"),
+                    })?;
+                repo.create_handle_if_missing(&entry_with_tag, &origin, &application_contract)
+                    .await
+            }
+        }))
+        .await;
 
         for result in creation_result {
             match result {
@@ -512,14 +518,21 @@ impl DataRepository {
         let mut results = Vec::with_capacity(ids.len());
         let repo = self.clone();
         let owned_ids: Vec<String> = ids.to_vec();
-        let fetch_handle_results: Vec<_> = stream::iter(owned_ids)
-            .map(|id| {
-                let repo = repo.clone();
-                async move { repo.fetch_handle(&id).await }
-            })
-            .buffer_unordered(repo.max_concurrent_requests)
-            .collect()
-            .await;
+        let fetch_handle_results: Vec<_> = join_all(owned_ids.iter().map(|id| {
+            let repo = repo.clone();
+            let id = id.clone();
+            async move {
+                let _permit = repo
+                    .semaphore
+                    .acquire()
+                    .await
+                    .map_err(|e| S3Error::S3Operation {
+                        message: format!("semaphore error: {e}"),
+                    })?;
+                repo.fetch_handle(&id).await
+            }
+        }))
+        .await;
 
         for fetch_handle_result in fetch_handle_results {
             match fetch_handle_result {
