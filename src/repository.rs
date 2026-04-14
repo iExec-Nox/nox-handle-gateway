@@ -129,8 +129,8 @@ pub struct PublishSummary {
 pub struct DataRepository {
     client: Client,
     bucket: String,
-    semaphore: Arc<Semaphore>,
     object_lock_enabled: bool,
+    semaphore: Arc<Semaphore>,
 }
 
 impl DataRepository {
@@ -171,8 +171,8 @@ impl DataRepository {
         let repo = Self {
             client: Client::from_conf(s3_config),
             bucket: config.bucket.clone(),
-            semaphore: Arc::new(Semaphore::new(config.max_concurrent_requests)),
             object_lock_enabled: config.object_lock_enabled,
+            semaphore: Arc::new(Semaphore::new(config.max_concurrent_requests)),
         };
 
         repo.validate_bucket().await?;
