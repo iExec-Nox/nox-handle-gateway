@@ -37,6 +37,8 @@ const METADATA_CONTENT_SHA256: &str = "content-sha256";
 pub enum S3Error {
     #[error("Object already exists: {key}")]
     AlreadyExists { key: String },
+    #[error("Invalid handle: {reason}")]
+    InvalidHandle { reason: String },
     #[error("Object not found: {key}")]
     NotFound { key: String },
     #[error("S3 operation failed: {message}")]
@@ -327,7 +329,7 @@ impl BucketRepository {
         application_contract: &str,
     ) -> Result<S3HandleCreationStatus, S3Error> {
         let handle_bytes =
-            hex::decode(entry_with_tag.handle.clone()).map_err(|e| S3Error::S3Operation {
+            hex::decode(&entry_with_tag.handle).map_err(|e| S3Error::S3Operation {
                 message: format!("invalid handle hex '{}': {e}", entry_with_tag.handle),
             })?;
         let data_type = SolidityType::try_from(handle_bytes[5])

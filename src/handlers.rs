@@ -3,8 +3,6 @@
 //! The handlers implement interactions for users or runners.
 //! User interactions, specifically the access to encrypted data
 //! held by a handle are verified against on-chain ACL.
-use std::collections::HashMap;
-
 use alloy_primitives::{Address, B256, Bytes, U256, hex, keccak256};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
@@ -89,6 +87,8 @@ pub struct GatewayDelegateResponse {
 /// stores the ciphertext in S3, and returns a signed EIP-712 `HandleProof` wrapped in
 /// a Handle Gateway outer signature.
 ///
+/// Route: `POST /v0/{chain_id}/secrets`
+///
 /// # HTTP responses
 ///
 /// - `200 OK` — JSON `{ "payload": { "handle": "0x...", "proof": "0x..." }, "signature": "0x..." }`.
@@ -139,7 +139,7 @@ pub async fn create_handle(
     state.repository.create_handle(&entry, &metadata).await?;
 
     // HandleProof
-    let domain = eip712_domain! {
+    let nox_compute_domain = eip712_domain! {
         name: NOX_COMPUTE_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(state.config.chain.id),
@@ -156,7 +156,7 @@ pub async fn create_handle(
 
     let handle_proof_signature = state
         .signer
-        .sign_typed_data_sync(&proof, &domain)
+        .sign_typed_data_sync(&proof, &nox_compute_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .as_bytes();
 
@@ -166,10 +166,10 @@ pub async fn create_handle(
         handle: serialized_handle,
         proof: serialized_handle_proof,
     };
-    let domain = handle_gateway_response_domain(state.config.chain.id, salt);
+    let response_domain = handle_gateway_response_domain(state.config.chain.id, salt);
     let handle_response_signature = state
         .signer
-        .sign_typed_data_sync(&handle_with_proof, &domain)
+        .sign_typed_data_sync(&handle_with_proof, &response_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();
 
@@ -628,10 +628,6 @@ pub async fn get_operand_handles(
 
     let operands_expected_count = compute_request.operands.len();
 
-    for handle in &compute_request.operands {
-        parse_handle(handle)?;
-    }
-
     let operand_handles: Vec<HandleEntry> = state
         .repository
         .read_handles(&compute_request.operands)
@@ -838,11 +834,7 @@ pub async fn handle_status(
 ) -> Result<Json<HandleStatusReportResponse>, AppError> {
     let salt = extract_salt(salt_query)?;
     info!(count = request.handles.len(), "handle status request");
-    for handle in &request.handles {
-        parse_handle(handle)?;
-    }
-    let exists_map: HashMap<String, bool> =
-        state.repository.handles_exist(&request.handles).await?;
+    let exists_map = state.repository.handles_exist(&request.handles).await?;
     let statuses: Vec<HandleResolution> = request
         .handles
         .iter()

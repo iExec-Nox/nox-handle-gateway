@@ -74,6 +74,7 @@ impl AppError {
                 repository::S3Error::NotFound { .. } => StatusCode::NOT_FOUND,
                 repository::S3Error::AlreadyExists { .. } => StatusCode::CONFLICT,
                 repository::S3Error::UnknownChain { .. } => StatusCode::BAD_REQUEST,
+                repository::S3Error::InvalidHandle { .. } => StatusCode::BAD_REQUEST,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,

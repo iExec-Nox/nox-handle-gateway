@@ -8,23 +8,23 @@
 
 mod bucket;
 
-pub use bucket::{
-    BucketRepository, HandleEntry, HandleS3Metadata, PublishSummary, S3Error,
-    S3HandleCreationStatus,
-};
+use bucket::BucketRepository;
+pub use bucket::{HandleEntry, HandleS3Metadata, PublishSummary, S3Error, S3HandleCreationStatus};
 
 use std::{collections::HashMap, iter::zip};
 
-use alloy_primitives::hex;
 use futures_util::future::join_all;
 
 use crate::config::S3Config;
 use crate::handlers::HandleEntryWithTag;
+use crate::validation::parse_handle;
 
-/// Extracts the chain ID from a validated handle hex string.
-fn chain_id_from_handle(handle: &str) -> u32 {
-    let bytes = hex::decode(handle).unwrap();
-    u32::from_be_bytes(bytes[1..5].try_into().unwrap())
+/// Extracts the chain ID from a handle hex string.
+fn chain_id_from_handle(handle: &str) -> Result<u32, S3Error> {
+    let bytes = parse_handle(handle).map_err(|e| S3Error::InvalidHandle {
+        reason: e.to_string(),
+    })?;
+    Ok(u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]))
 }
 
 /// Chain-routing repository that dispatches all handle operations to the
@@ -63,7 +63,7 @@ impl DataRepository {
         entry: &HandleEntry,
         s3_metadata: &HandleS3Metadata,
     ) -> Result<(), S3Error> {
-        let chain_id = chain_id_from_handle(&entry.handle);
+        let chain_id = chain_id_from_handle(&entry.handle)?;
         self.repo_for_chain(chain_id)?
             .create_handle(entry, s3_metadata)
             .await
@@ -87,7 +87,7 @@ impl DataRepository {
     /// the chain ID is not configured because an unconfigured chain means the handle
     /// cannot exist, which is indistinguishable from a missing key to the caller.
     pub async fn fetch_handle(&self, handle: &str) -> Result<HandleEntry, S3Error> {
-        let chain_id = chain_id_from_handle(handle);
+        let chain_id = chain_id_from_handle(handle)?;
         match self.repo_for_chain(chain_id) {
             Ok(repo) => repo.fetch_handle(handle).await,
             Err(S3Error::UnknownChain { .. }) => Err(S3Error::NotFound {
@@ -107,7 +107,7 @@ impl DataRepository {
     pub async fn read_handles(&self, ids: &[String]) -> Result<Vec<HandleEntry>, S3Error> {
         let mut groups: HashMap<u32, Vec<(usize, &String)>> = HashMap::new();
         for (i, id) in ids.iter().enumerate() {
-            let chain_id = chain_id_from_handle(id);
+            let chain_id = chain_id_from_handle(id)?;
             groups.entry(chain_id).or_default().push((i, id));
         }
 
@@ -137,7 +137,7 @@ impl DataRepository {
     pub async fn handles_exist(&self, ids: &[String]) -> Result<HashMap<String, bool>, S3Error> {
         let mut groups: HashMap<u32, Vec<&String>> = HashMap::new();
         for id in ids {
-            let chain_id = chain_id_from_handle(id);
+            let chain_id = chain_id_from_handle(id)?;
             groups.entry(chain_id).or_default().push(id);
         }
 

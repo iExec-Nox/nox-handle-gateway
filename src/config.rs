@@ -60,8 +60,10 @@ pub struct S3Config {
     pub secret_key: String,
     pub bucket: String,
     pub endpoint_url: Option<String>,
+    #[serde(default = "default_s3_object_lock_enabled")]
     pub object_lock_enabled: bool,
     pub region: String,
+    #[serde(default = "default_s3_timeout")]
     pub timeout: u64,
 }
 
@@ -91,11 +93,21 @@ pub struct SignerConfig {
     pub wallet_key: String,
 }
 
+/// Default S3 operation timeout in seconds.
+fn default_s3_timeout() -> u64 {
+    30
+}
+
+/// Default S3 Object Lock enabled flag.
+fn default_s3_object_lock_enabled() -> bool {
+    true
+}
+
 impl Config {
     /// Loads configuration from environment variables.
     ///
     /// Variables are prefixed `NOX_HANDLE_GATEWAY_` with `__` as the nested
-    /// separator (e.g. `NOX_HANDLE_GATEWAY_S3__BUCKET`). Secret-file variants
+    /// separator (e.g. `NOX_HANDLE_GATEWAY_S3__421614__BUCKET`). Secret-file variants
     /// are also supported via `config_secret`.
     pub fn load() -> Result<Self, ConfigError> {
         let config = ConfigBuilder::builder()
