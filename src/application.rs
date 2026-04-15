@@ -74,7 +74,7 @@ impl Application {
             .route("/compute/results", post(handlers::publish_results))
             .route("/public/{handle}", get(handlers::public_decrypt))
             .route("/public/handles/status", post(handlers::handle_status))
-            .route("/secrets", post(handlers::create_handle))
+            .route("/{chain_id}/secrets", post(handlers::create_handle))
             .route(
                 "/secrets/{handle}",
                 get(handlers::get_handle_crypto_material),

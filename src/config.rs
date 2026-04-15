@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use alloy_primitives::Address;
 use config::{Config as ConfigBuilder, ConfigError, Environment};
 use config_secret::EnvironmentSecretFile;
@@ -13,7 +15,7 @@ pub struct Config {
     pub server: ServerConfig,
     pub chain: ChainConfig,
     pub kms: KmsConfig,
-    pub s3: S3Config,
+    pub s3: HashMap<u32, S3Config>,
     pub signer: SignerConfig,
     pub runner_address: Address,
 }
@@ -103,9 +105,6 @@ impl Config {
                 "server.cors_allowed_headers",
                 vec!["content-type", "authorization"],
             )?
-            .set_default("s3.bucket", "handles")?
-            .set_default("s3.object_lock_enabled", true)?
-            .set_default("s3.timeout", 30)?
             .set_default("chain.id", 421614)?
             .set_default(
                 "chain.nox_compute_contract",

@@ -3,6 +3,7 @@
 //! The handlers implement interactions for users or runners.
 //! User interactions, specifically the access to encrypted data
 //! held by a handle are verified against on-chain ACL.
+use std::collections::HashMap;
 
 use alloy_primitives::{Address, B256, Bytes, U256, hex, keccak256};
 use alloy_signer::{Signature, SignerSync};
@@ -96,6 +97,7 @@ pub struct GatewayDelegateResponse {
 /// - `500 Internal Server Error` — encryption, signing, or unexpected S3 error.
 pub async fn create_handle(
     State(state): State<AppState>,
+    Path(chain_id): Path<u32>,
     Query(salt_query): Query<SaltQuery>,
     Json(request): Json<HandleRequest>,
 ) -> Result<Json<HandleResponse>, AppError> {
@@ -105,7 +107,7 @@ pub async fn create_handle(
     let ecies_ciphertext = state.crypto_svc.ecies_encrypt(&plaintext)?;
 
     let data_type = request.solidity_type.to_string();
-    let handle = Handle::new(state.config.chain.id, request.solidity_type).to_bytes();
+    let handle = Handle::new(chain_id, request.solidity_type).to_bytes();
 
     let serialized_handle = hex::encode_prefixed(handle);
 
@@ -126,7 +128,7 @@ pub async fn create_handle(
     let metadata = HandleS3Metadata {
         handle: serialized_handle.clone(),
         created_at: Utc::now().naive_utc(),
-        chain_id: state.config.chain.id,
+        chain_id,
         data_type,
         origin: "gateway".to_string(),
         is_public: false,
@@ -626,6 +628,10 @@ pub async fn get_operand_handles(
 
     let operands_expected_count = compute_request.operands.len();
 
+    for handle in &compute_request.operands {
+        parse_handle(handle)?;
+    }
+
     let operand_handles: Vec<HandleEntry> = state
         .repository
         .read_handles(&compute_request.operands)
@@ -767,10 +773,14 @@ pub async fn publish_results(
         "publishing result handles to S3"
     );
 
+    let chain_id = u32::try_from(compute_result.chainId).map_err(|_| {
+        AppError::BadRequest(format!("chainId {} overflows u32", compute_result.chainId))
+    })?;
     let summary = state
         .repository
         .create_handles(
             handles,
+            chain_id,
             &compute_result.transactionHash,
             &compute_result.caller.to_string(),
         )
@@ -828,7 +838,11 @@ pub async fn handle_status(
 ) -> Result<Json<HandleStatusReportResponse>, AppError> {
     let salt = extract_salt(salt_query)?;
     info!(count = request.handles.len(), "handle status request");
-    let exists_map = state.repository.handles_exist(&request.handles).await?;
+    for handle in &request.handles {
+        parse_handle(handle)?;
+    }
+    let exists_map: HashMap<String, bool> =
+        state.repository.handles_exist(&request.handles).await?;
     let statuses: Vec<HandleResolution> = request
         .handles
         .iter()

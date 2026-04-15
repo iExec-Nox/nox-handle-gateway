@@ -32,7 +32,7 @@ const RETENTION_DURATION_SECS: u64 = 100 * 365 * 24 * 3600;
 /// S3 metadata key for the SHA-256 hex digest of the stored JSON body.
 const METADATA_CONTENT_SHA256: &str = "content-sha256";
 
-/// Errors returned by [`DataRepository`] operations.
+/// Errors returned by [`BucketRepository`] operations.
 #[derive(Error, Debug)]
 pub enum S3Error {
     #[error("Object already exists: {key}")]
@@ -41,6 +41,8 @@ pub enum S3Error {
     NotFound { key: String },
     #[error("S3 operation failed: {message}")]
     S3Operation { message: String },
+    #[error("No S3 bucket configured for chain ID {chain_id}")]
+    UnknownChain { chain_id: u32 },
 }
 
 pub enum S3HandleCreationStatus {
@@ -81,7 +83,7 @@ pub struct HandleEntry {
 /// downloading the object body.
 ///
 /// `content-sha256` is **not** included here; it is computed and inserted
-/// by [`DataRepository::create_handle`] itself.
+/// by [`BucketRepository::create_handle`] itself.
 pub struct HandleS3Metadata {
     pub handle: String,
     pub created_at: NaiveDateTime,
@@ -124,13 +126,13 @@ pub struct PublishSummary {
 
 /// S3/MinIO client wrapper for handle storage operations.
 #[derive(Clone)]
-pub struct DataRepository {
+pub struct BucketRepository {
     client: Client,
     bucket: String,
     object_lock_enabled: bool,
 }
 
-impl DataRepository {
+impl BucketRepository {
     /// Builds the S3 client from config and validates the target bucket.
     ///
     /// Fails fast: returns an error (and the process exits) if the bucket is

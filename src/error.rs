@@ -73,6 +73,7 @@ impl AppError {
             AppError::StorageError(e) => match e {
                 repository::S3Error::NotFound { .. } => StatusCode::NOT_FOUND,
                 repository::S3Error::AlreadyExists { .. } => StatusCode::CONFLICT,
+                repository::S3Error::UnknownChain { .. } => StatusCode::BAD_REQUEST,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
