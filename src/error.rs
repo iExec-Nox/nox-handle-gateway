@@ -58,8 +58,8 @@ impl AppError {
             AppError::InvalidSolidityType(_) => StatusCode::BAD_REQUEST,
             AppError::InvalidSolidityValue(_) => StatusCode::BAD_REQUEST,
             AppError::KmsError(e) => match e {
-                kms::Error::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
                 kms::Error::InvalidResponse(_) => StatusCode::BAD_REQUEST,
+                kms::Error::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             AppError::OperandsNotPrepared => StatusCode::INTERNAL_SERVER_ERROR,
@@ -71,10 +71,10 @@ impl AppError {
             },
             AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::StorageError(e) => match e {
-                repository::S3Error::NotFound { .. } => StatusCode::NOT_FOUND,
                 repository::S3Error::AlreadyExists { .. } => StatusCode::CONFLICT,
-                repository::S3Error::UnknownChain { .. } => StatusCode::BAD_REQUEST,
                 repository::S3Error::InvalidHandle { .. } => StatusCode::BAD_REQUEST,
+                repository::S3Error::NotFound { .. } => StatusCode::NOT_FOUND,
+                repository::S3Error::UnknownChain { .. } => StatusCode::BAD_REQUEST,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
