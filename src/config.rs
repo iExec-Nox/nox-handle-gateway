@@ -58,6 +58,7 @@ pub struct S3Config {
     pub secret_key: String,
     pub bucket: String,
     pub endpoint_url: Option<String>,
+    pub max_concurrent_requests: usize,
     pub object_lock_enabled: bool,
     pub region: String,
     pub timeout: u64,
@@ -104,6 +105,7 @@ impl Config {
                 vec!["content-type", "authorization"],
             )?
             .set_default("s3.bucket", "handles")?
+            .set_default("s3.max_concurrent_requests", 100)?
             .set_default("s3.object_lock_enabled", true)?
             .set_default("s3.timeout", 30)?
             .set_default("chain.id", 421614)?

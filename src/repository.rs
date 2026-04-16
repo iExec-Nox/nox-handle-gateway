@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use alloy_primitives::hex;
@@ -21,6 +22,7 @@ use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
 
 use crate::config::S3Config;
@@ -128,6 +130,7 @@ pub struct DataRepository {
     client: Client,
     bucket: String,
     object_lock_enabled: bool,
+    semaphore: Arc<Semaphore>,
 }
 
 impl DataRepository {
@@ -169,6 +172,7 @@ impl DataRepository {
             client: Client::from_conf(s3_config),
             bucket: config.bucket.clone(),
             object_lock_enabled: config.object_lock_enabled,
+            semaphore: Arc::new(Semaphore::new(config.max_concurrent_requests)),
         };
 
         repo.validate_bucket().await?;
@@ -438,8 +442,24 @@ impl DataRepository {
             conflicted: 0,
         };
 
-        let creation_result = join_all(entries.iter().map(|entry_with_tag| {
-            self.create_handle_if_missing(entry_with_tag, origin, application_contract)
+        let repo = self.clone();
+        let origin = origin.to_string();
+        let application_contract = application_contract.to_string();
+        let creation_result: Vec<_> = join_all(entries.into_iter().map(|entry_with_tag| {
+            let repo = repo.clone();
+            let origin = origin.clone();
+            let application_contract = application_contract.clone();
+            async move {
+                let _permit = repo
+                    .semaphore
+                    .acquire()
+                    .await
+                    .map_err(|e| S3Error::S3Operation {
+                        message: format!("semaphore error: {e}"),
+                    })?;
+                repo.create_handle_if_missing(&entry_with_tag, &origin, &application_contract)
+                    .await
+            }
         }))
         .await;
 
@@ -496,7 +516,23 @@ impl DataRepository {
     /// error. Any other S3 error (network, permissions) is propagated immediately.
     pub async fn read_handles(&self, ids: &[String]) -> Result<Vec<HandleEntry>, S3Error> {
         let mut results = Vec::with_capacity(ids.len());
-        let fetch_handle_results = join_all(ids.iter().map(|id| self.fetch_handle(id))).await;
+        let repo = self.clone();
+        let owned_ids: Vec<String> = ids.to_vec();
+        let fetch_handle_results: Vec<_> = join_all(owned_ids.iter().map(|id| {
+            let repo = repo.clone();
+            let id = id.clone();
+            async move {
+                let _permit = repo
+                    .semaphore
+                    .acquire()
+                    .await
+                    .map_err(|e| S3Error::S3Operation {
+                        message: format!("semaphore error: {e}"),
+                    })?;
+                repo.fetch_handle(&id).await
+            }
+        }))
+        .await;
 
         for fetch_handle_result in fetch_handle_results {
             match fetch_handle_result {
