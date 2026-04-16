@@ -39,7 +39,7 @@ jobs:
   build-oci-image:
     name: Build OCI image
     needs: prepare
-    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build.yml@docker-build-v3.2.0
+    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build.yml@docker-build-v3.3.0
     with:
       image-name: docker-regis.iex.ec/nox-handle-gateway
       image-tag: ${{ needs.prepare.outputs.image_tag }}
@@ -52,5 +52,7 @@ jobs:
       hadolint: true
       platform: linux/amd64
     secrets:
+      dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+      dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN_PULL_ONLY }}
       username: ${{ secrets.DOCKERREGIS_USERNAME }}
       password: ${{ secrets.DOCKERREGIS_PASSWORD }}
