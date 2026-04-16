@@ -747,12 +747,15 @@ pub async fn publish_results(
     let authorization: ComputeResultRequest =
         serde_json::from_slice(&token_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
 
+    let compute_result = authorization.payload;
+    let chain_id = u32::try_from(compute_result.chainId).map_err(|_| {
+        AppError::BadRequest(format!("chainId {} overflows u32", compute_result.chainId))
+    })?;
     let auth_domain = eip712_domain! {
         name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
         version: "1",
-        chain_id: u64::from(state.config.chain.id),
+        chain_id: u64::from(chain_id),
     };
-    let compute_result = authorization.payload;
     let hash = compute_result.eip712_signing_hash(&auth_domain);
     recover_and_check_address(
         &state.config.runner_address,
@@ -768,10 +771,6 @@ pub async fn publish_results(
         transaction_hash = compute_result.transactionHash.to_string(),
         "publishing result handles to S3"
     );
-
-    let chain_id = u32::try_from(compute_result.chainId).map_err(|_| {
-        AppError::BadRequest(format!("chainId {} overflows u32", compute_result.chainId))
-    })?;
     let summary = state
         .repository
         .create_handles(
@@ -789,7 +788,7 @@ pub async fn publish_results(
         ),
     };
 
-    let response_domain = handle_gateway_response_domain(state.config.chain.id, salt);
+    let response_domain = handle_gateway_response_domain(chain_id, salt);
     let signature = state
         .signer
         .sign_typed_data_sync(&payload, &response_domain)
