@@ -11,9 +11,9 @@ mod bucket;
 use bucket::BucketRepository;
 pub use bucket::{HandleEntry, HandleS3Metadata, PublishSummary, S3Error, S3HandleCreationStatus};
 
-use std::{collections::HashMap, iter::zip};
+use std::collections::HashMap;
 
-use futures_util::future::join_all;
+use futures_util::future::try_join_all;
 
 use crate::config::S3Config;
 use crate::handlers::HandleEntryWithTag;
@@ -39,15 +39,14 @@ impl DataRepository {
     /// buckets concurrently at startup. Fails if any bucket is unreachable or
     /// has a mismatched Object Lock state.
     pub async fn new(configs: &HashMap<u32, S3Config>) -> anyhow::Result<Self> {
-        let pairs = join_all(configs.iter().map(|(&chain_id, cfg)| async move {
-            let repo = BucketRepository::new(cfg).await?;
-            Ok::<_, anyhow::Error>((chain_id, repo))
+        let repos = try_join_all(configs.iter().map(|(&chain_id, cfg)| async move {
+            BucketRepository::new(cfg)
+                .await
+                .map(|repo| (chain_id, repo))
         }))
-        .await;
-
-        let repos = pairs
-            .into_iter()
-            .collect::<anyhow::Result<HashMap<_, _>>>()?;
+        .await?
+        .into_iter()
+        .collect();
 
         Ok(Self { repos })
     }
@@ -60,10 +59,10 @@ impl DataRepository {
 
     pub async fn create_handle(
         &self,
+        chain_id: u32,
         entry: &HandleEntry,
         s3_metadata: &HandleS3Metadata,
     ) -> Result<(), S3Error> {
-        let chain_id = chain_id_from_handle(&entry.handle)?;
         self.repo_for_chain(chain_id)?
             .create_handle(entry, s3_metadata)
             .await
@@ -97,41 +96,33 @@ impl DataRepository {
         }
     }
 
-    /// Fetches entries from each chain's bucket in a single pass per chain.
+    /// Fetches entries from the bucket for a single chain.
     ///
-    /// Handles are grouped by chain ID so each [`BucketRepository`] is called
-    /// once with its subset rather than once per handle. Original ordering is
-    /// preserved by tracking each handle's position before grouping and
-    /// reinserting results by index. Handles whose chain ID is not configured
-    /// are silently omitted as they cannot exist in any bucket.
-    pub async fn read_handles(&self, ids: &[String]) -> Result<Vec<HandleEntry>, S3Error> {
-        let mut groups: HashMap<u32, Vec<(usize, &String)>> = HashMap::new();
-        for (i, id) in ids.iter().enumerate() {
-            let chain_id = chain_id_from_handle(id)?;
-            groups.entry(chain_id).or_default().push((i, id));
-        }
-
-        let mut results: Vec<Option<HandleEntry>> = vec![None; ids.len()];
-
-        for (chain_id, indexed_ids) in groups {
-            let repo = match self.repo_for_chain(chain_id) {
-                Ok(repo) => repo,
-                Err(S3Error::UnknownChain { .. }) => continue,
-                Err(e) => return Err(e),
-            };
-            let raw_ids: Vec<String> = indexed_ids.iter().map(|(_, id)| (*id).clone()).collect();
-            let entries = repo.read_handles(&raw_ids).await?;
-            for (entry, (orig_idx, _)) in zip(entries, indexed_ids) {
-                results[orig_idx] = Some(entry);
+    /// All operands in one compute request belong to the same transaction and
+    /// therefore to the same chain. A mixed-chain batch is a caller bug and is
+    /// rejected with [`S3Error::InvalidHandle`].
+    pub async fn read_handles(
+        &self,
+        chain_id: u32,
+        ids: &[String],
+    ) -> Result<Vec<HandleEntry>, S3Error> {
+        for id in ids {
+            let handle_chain = chain_id_from_handle(id)?;
+            if handle_chain != chain_id {
+                return Err(S3Error::InvalidHandle {
+                    reason: format!(
+                        "handle {id} encodes chain {handle_chain}, expected {chain_id}",
+                    ),
+                });
             }
         }
-
-        Ok(results.into_iter().flatten().collect())
+        self.repo_for_chain(chain_id)?.read_handles(ids).await
     }
 
     /// Checks existence of handles across chains, one bucket call per chain.
     ///
-    /// Uses the same grouping strategy as [`Self::read_handles`]. Handles whose
+    /// Handles are grouped by their embedded chain ID so each
+    /// [`BucketRepository`] is queried once with its subset. Handles whose
     /// chain ID is not configured are reported as `false` as the caller asked
     /// about existence and an unconfigured chain is a definitive "no".
     pub async fn handles_exist(&self, ids: &[String]) -> Result<HashMap<String, bool>, S3Error> {
