@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use alloy_primitives::hex;
@@ -21,6 +22,7 @@ use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
 
 use crate::config::S3Config;
@@ -32,15 +34,19 @@ const RETENTION_DURATION_SECS: u64 = 100 * 365 * 24 * 3600;
 /// S3 metadata key for the SHA-256 hex digest of the stored JSON body.
 const METADATA_CONTENT_SHA256: &str = "content-sha256";
 
-/// Errors returned by [`DataRepository`] operations.
+/// Errors returned by [`BucketRepository`] operations.
 #[derive(Error, Debug)]
 pub enum S3Error {
     #[error("Object already exists: {key}")]
     AlreadyExists { key: String },
+    #[error("Invalid handle: {reason}")]
+    InvalidHandle { reason: String },
     #[error("Object not found: {key}")]
     NotFound { key: String },
     #[error("S3 operation failed: {message}")]
     S3Operation { message: String },
+    #[error("No S3 bucket configured for chain ID {chain_id}")]
+    UnknownChain { chain_id: u32 },
 }
 
 pub enum S3HandleCreationStatus {
@@ -81,7 +87,7 @@ pub struct HandleEntry {
 /// downloading the object body.
 ///
 /// `content-sha256` is **not** included here; it is computed and inserted
-/// by [`DataRepository::create_handle`] itself.
+/// by [`BucketRepository::create_handle`] itself.
 pub struct HandleS3Metadata {
     pub handle: String,
     pub created_at: NaiveDateTime,
@@ -124,13 +130,14 @@ pub struct PublishSummary {
 
 /// S3/MinIO client wrapper for handle storage operations.
 #[derive(Clone)]
-pub struct DataRepository {
+pub struct BucketRepository {
     client: Client,
     bucket: String,
     object_lock_enabled: bool,
+    semaphore: Arc<Semaphore>,
 }
 
-impl DataRepository {
+impl BucketRepository {
     /// Builds the S3 client from config and validates the target bucket.
     ///
     /// Fails fast: returns an error (and the process exits) if the bucket is
@@ -169,6 +176,7 @@ impl DataRepository {
             client: Client::from_conf(s3_config),
             bucket: config.bucket.clone(),
             object_lock_enabled: config.object_lock_enabled,
+            semaphore: Arc::new(Semaphore::new(config.max_concurrent_requests)),
         };
 
         repo.validate_bucket().await?;
@@ -325,7 +333,7 @@ impl DataRepository {
         application_contract: &str,
     ) -> Result<S3HandleCreationStatus, S3Error> {
         let handle_bytes =
-            hex::decode(entry_with_tag.handle.clone()).map_err(|e| S3Error::S3Operation {
+            hex::decode(&entry_with_tag.handle).map_err(|e| S3Error::S3Operation {
                 message: format!("invalid handle hex '{}': {e}", entry_with_tag.handle),
             })?;
         let data_type = SolidityType::try_from(handle_bytes[5])
@@ -438,8 +446,24 @@ impl DataRepository {
             conflicted: 0,
         };
 
-        let creation_result = join_all(entries.iter().map(|entry_with_tag| {
-            self.create_handle_if_missing(entry_with_tag, origin, application_contract)
+        let repo = self.clone();
+        let origin = origin.to_string();
+        let application_contract = application_contract.to_string();
+        let creation_result: Vec<_> = join_all(entries.into_iter().map(|entry_with_tag| {
+            let repo = repo.clone();
+            let origin = origin.clone();
+            let application_contract = application_contract.clone();
+            async move {
+                let _permit = repo
+                    .semaphore
+                    .acquire()
+                    .await
+                    .map_err(|e| S3Error::S3Operation {
+                        message: format!("semaphore error: {e}"),
+                    })?;
+                repo.create_handle_if_missing(&entry_with_tag, &origin, &application_contract)
+                    .await
+            }
         }))
         .await;
 
@@ -496,7 +520,23 @@ impl DataRepository {
     /// error. Any other S3 error (network, permissions) is propagated immediately.
     pub async fn read_handles(&self, ids: &[String]) -> Result<Vec<HandleEntry>, S3Error> {
         let mut results = Vec::with_capacity(ids.len());
-        let fetch_handle_results = join_all(ids.iter().map(|id| self.fetch_handle(id))).await;
+        let repo = self.clone();
+        let owned_ids: Vec<String> = ids.to_vec();
+        let fetch_handle_results: Vec<_> = join_all(owned_ids.iter().map(|id| {
+            let repo = repo.clone();
+            let id = id.clone();
+            async move {
+                let _permit = repo
+                    .semaphore
+                    .acquire()
+                    .await
+                    .map_err(|e| S3Error::S3Operation {
+                        message: format!("semaphore error: {e}"),
+                    })?;
+                repo.fetch_handle(&id).await
+            }
+        }))
+        .await;
 
         for fetch_handle_result in fetch_handle_results {
             match fetch_handle_result {

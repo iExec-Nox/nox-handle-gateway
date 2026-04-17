@@ -3,7 +3,6 @@
 //! The handlers implement interactions for users or runners.
 //! User interactions, specifically the access to encrypted data
 //! held by a handle are verified against on-chain ACL.
-
 use alloy_primitives::{Address, B256, Bytes, U256, hex, keccak256};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
@@ -34,12 +33,18 @@ const HANDLE_GATEWAY_EIP712_DOMAIN_NAME: &str = "Handle Gateway";
 /// Maximum allowed validity window for DataAccessAuthorization tokens, in seconds.
 const MAX_AUTHORIZATION_VALIDITY_WINDOW_SECS: u64 = 3600;
 
-/// Optional `?salt=<0x bytes32>` query parameter present on all endpoints.
+/// Shared query parameters for every versioned endpoint.
 ///
-/// If absent the salt defaults to `bytes32(0)` and is bound into the Handle Gateway
-/// EIP-712 response-signing domain so callers can associate a response with a specific request.
+/// - `salt` — optional 32-byte hex value bound into the Handle Gateway EIP-712
+///   response-signing domain so callers can associate a response with a
+///   specific request. Absent → `bytes32(0)`.
+/// - `chain_id` — only meaningful on `POST /v0/secrets`. Optional; when
+///   provided it must equal `config.chain.id`, otherwise the request is
+///   rejected (400). When absent the gateway falls back to `config.chain.id`.
+///   Other endpoints ignore this field.
 #[derive(Debug, Deserialize)]
-pub struct SaltQuery {
+pub struct QueryParams {
+    chain_id: Option<u32>,
     salt: Option<String>,
 }
 
@@ -88,24 +93,41 @@ pub struct GatewayDelegateResponse {
 /// stores the ciphertext in S3, and returns a signed EIP-712 `HandleProof` wrapped in
 /// a Handle Gateway outer signature.
 ///
+/// Route: `POST /v0/secrets`
+///
+/// The `chain_id` query parameter is optional. When provided it must equal
+/// `config.chain.id`; any other value is rejected with 400. When absent the
+/// gateway falls back to `config.chain.id`. This temporary shape anticipates a
+/// future multi-chain write path.
+///
 /// # HTTP responses
 ///
 /// - `200 OK` — JSON `{ "payload": { "handle": "0x...", "proof": "0x..." }, "signature": "0x..." }`.
-/// - `400 Bad Request` — `value` does not match the declared `solidityType`, or `salt` is malformed.
+/// - `400 Bad Request` — `chain_id` query param present but not equal to `config.chain.id`;
+///   `value` does not match the declared `solidityType`; or `salt` is malformed.
 /// - `409 Conflict` — handle already exists in S3.
 /// - `500 Internal Server Error` — encryption, signing, or unexpected S3 error.
 pub async fn create_handle(
     State(state): State<AppState>,
-    Query(salt_query): Query<SaltQuery>,
+    Query(query_params): Query<QueryParams>,
     Json(request): Json<HandleRequest>,
 ) -> Result<Json<HandleResponse>, AppError> {
-    let salt = extract_salt(salt_query)?;
+    if let Some(requested) = query_params.chain_id
+        && requested != state.config.chain.id
+    {
+        return Err(AppError::BadRequest(format!(
+            "chain_id {requested} not supported; expected {}",
+            state.config.chain.id,
+        )));
+    }
+    let chain_id = state.config.chain.id;
+    let salt = extract_salt(query_params.salt)?;
     // Handle
     let plaintext = decode_and_validate_value(&request.value, &request.solidity_type)?;
     let ecies_ciphertext = state.crypto_svc.ecies_encrypt(&plaintext)?;
 
     let data_type = request.solidity_type.to_string();
-    let handle = Handle::new(state.config.chain.id, request.solidity_type).to_bytes();
+    let handle = Handle::new(chain_id, request.solidity_type).to_bytes();
 
     let serialized_handle = hex::encode_prefixed(handle);
 
@@ -126,7 +148,7 @@ pub async fn create_handle(
     let metadata = HandleS3Metadata {
         handle: serialized_handle.clone(),
         created_at: Utc::now().naive_utc(),
-        chain_id: state.config.chain.id,
+        chain_id,
         data_type,
         origin: "gateway".to_string(),
         is_public: false,
@@ -134,10 +156,13 @@ pub async fn create_handle(
         application_contract: request.application_contract.to_string(),
     };
 
-    state.repository.create_handle(&entry, &metadata).await?;
+    state
+        .repository
+        .create_handle(chain_id, &entry, &metadata)
+        .await?;
 
     // HandleProof
-    let domain = eip712_domain! {
+    let nox_compute_domain = eip712_domain! {
         name: NOX_COMPUTE_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(state.config.chain.id),
@@ -154,7 +179,7 @@ pub async fn create_handle(
 
     let handle_proof_signature = state
         .signer
-        .sign_typed_data_sync(&proof, &domain)
+        .sign_typed_data_sync(&proof, &nox_compute_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .as_bytes();
 
@@ -164,10 +189,10 @@ pub async fn create_handle(
         handle: serialized_handle,
         proof: serialized_handle_proof,
     };
-    let domain = handle_gateway_response_domain(state.config.chain.id, salt);
+    let response_domain = handle_gateway_response_domain(state.config.chain.id, salt);
     let handle_response_signature = state
         .signer
-        .sign_typed_data_sync(&handle_with_proof, &domain)
+        .sign_typed_data_sync(&handle_with_proof, &response_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();
 
@@ -199,10 +224,10 @@ pub async fn create_handle(
 pub async fn get_handle_crypto_material(
     Path(handle): Path<String>,
     State(state): State<AppState>,
-    Query(salt_query): Query<SaltQuery>,
+    Query(query_params): Query<QueryParams>,
     headers: HeaderMap,
 ) -> Result<Json<GatewayDelegateResponse>, AppError> {
-    let salt = extract_salt(salt_query)?;
+    let salt = extract_salt(query_params.salt)?;
     info!(handle = handle, "get_handle_crypto_material query");
     let token_bytes = extract_authorization(headers)?;
     let authorization: GatewayDelegateAuthorization =
@@ -358,9 +383,9 @@ pub async fn get_handle_crypto_material(
 pub async fn public_decrypt(
     Path(handle): Path<String>,
     State(state): State<AppState>,
-    Query(salt_query): Query<SaltQuery>,
+    Query(query_params): Query<QueryParams>,
 ) -> Result<Json<PublicDecryptResponse>, AppError> {
-    let salt = extract_salt(salt_query)?;
+    let salt = extract_salt(query_params.salt)?;
     let handle_b256 = parse_handle(&handle)?;
     SolidityType::try_from(handle_b256[5])?;
 
@@ -601,10 +626,10 @@ pub struct ComputeResultResponse {
 ///   either due to an operand not retrieved from S3 or not prepared through the KMS.
 pub async fn get_operand_handles(
     State(state): State<AppState>,
-    Query(salt_query): Query<SaltQuery>,
+    Query(query_params): Query<QueryParams>,
     headers: HeaderMap,
 ) -> Result<Json<ComputeOperandResponse>, AppError> {
-    let salt = extract_salt(salt_query)?;
+    let salt = extract_salt(query_params.salt)?;
     let token_bytes = extract_authorization(headers)?;
     let authorization: ComputeOperandRequest =
         serde_json::from_slice(&token_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
@@ -628,7 +653,7 @@ pub async fn get_operand_handles(
 
     let operand_handles: Vec<HandleEntry> = state
         .repository
-        .read_handles(&compute_request.operands)
+        .read_handles(state.config.chain.id, &compute_request.operands)
         .await?;
     debug!("operand handles count {}", operand_handles.len());
     if operand_handles.len() != operands_expected_count {
@@ -736,21 +761,24 @@ async fn get_crypto_material_for_entry(
 /// - [`super::repository::S3Error`] if an error occurs during publishing.
 pub async fn publish_results(
     State(state): State<AppState>,
-    Query(salt_query): Query<SaltQuery>,
+    Query(query_params): Query<QueryParams>,
     headers: HeaderMap,
     Json(handles): Json<Vec<HandleEntryWithTag>>,
 ) -> Result<Json<ComputeResultResponse>, AppError> {
-    let salt = extract_salt(salt_query)?;
+    let salt = extract_salt(query_params.salt)?;
     let token_bytes = extract_authorization(headers)?;
     let authorization: ComputeResultRequest =
         serde_json::from_slice(&token_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
 
+    let compute_result = authorization.payload;
+    let chain_id = u32::try_from(compute_result.chainId).map_err(|_| {
+        AppError::BadRequest(format!("chainId {} overflows u32", compute_result.chainId))
+    })?;
     let auth_domain = eip712_domain! {
         name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
         version: "1",
-        chain_id: u64::from(state.config.chain.id),
+        chain_id: u64::from(chain_id),
     };
-    let compute_result = authorization.payload;
     let hash = compute_result.eip712_signing_hash(&auth_domain);
     recover_and_check_address(
         &state.config.runner_address,
@@ -766,11 +794,11 @@ pub async fn publish_results(
         transaction_hash = compute_result.transactionHash.to_string(),
         "publishing result handles to S3"
     );
-
     let summary = state
         .repository
         .create_handles(
             handles,
+            chain_id,
             &compute_result.transactionHash,
             &compute_result.caller.to_string(),
         )
@@ -783,7 +811,7 @@ pub async fn publish_results(
         ),
     };
 
-    let response_domain = handle_gateway_response_domain(state.config.chain.id, salt);
+    let response_domain = handle_gateway_response_domain(chain_id, salt);
     let signature = state
         .signer
         .sign_typed_data_sync(&payload, &response_domain)
@@ -823,10 +851,10 @@ pub struct HandleStatusReportResponse {
 /// - `500 Internal Server Error` — unexpected S3 error (e.g. network failure or permission error).
 pub async fn handle_status(
     State(state): State<AppState>,
-    Query(salt_query): Query<SaltQuery>,
+    Query(query_params): Query<QueryParams>,
     Json(request): Json<HandleStatusRequest>,
 ) -> Result<Json<HandleStatusReportResponse>, AppError> {
-    let salt = extract_salt(salt_query)?;
+    let salt = extract_salt(query_params.salt)?;
     info!(count = request.handles.len(), "handle status request");
     let exists_map = state.repository.handles_exist(&request.handles).await?;
     let statuses: Vec<HandleResolution> = request
@@ -864,8 +892,8 @@ fn handle_gateway_response_domain(chain_id: u32, salt: B256) -> Eip712Domain {
 ///
 /// Returns `B256::ZERO` when the parameter is absent. When present, the value must
 /// be hex-decoded to exactly 32 bytes.
-fn extract_salt(query: SaltQuery) -> Result<B256, AppError> {
-    let Some(s) = query.salt else {
+fn extract_salt(salt: Option<String>) -> Result<B256, AppError> {
+    let Some(s) = salt else {
         return Ok(B256::ZERO);
     };
     let bytes =
