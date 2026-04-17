@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use alloy_primitives::Address;
 use config::{Config as ConfigBuilder, ConfigError, Environment};
 use config_secret::EnvironmentSecretFile;
@@ -13,7 +15,7 @@ pub struct Config {
     pub server: ServerConfig,
     pub chain: ChainConfig,
     pub kms: KmsConfig,
-    pub s3: S3Config,
+    pub s3: HashMap<u32, S3Config>,
     pub signer: SignerConfig,
     pub runner_address: Address,
 }
@@ -58,10 +60,28 @@ pub struct S3Config {
     pub secret_key: String,
     pub bucket: String,
     pub endpoint_url: Option<String>,
+    #[serde(default = "default_s3_max_concurrent_requests")]
     pub max_concurrent_requests: usize,
+    #[serde(default = "default_s3_object_lock_enabled")]
     pub object_lock_enabled: bool,
     pub region: String,
+    #[serde(default = "default_s3_timeout")]
     pub timeout: u64,
+}
+
+/// Default S3 operation timeout in seconds.
+fn default_s3_timeout() -> u64 {
+    30
+}
+
+/// Default S3 Object Lock enabled flag.
+fn default_s3_object_lock_enabled() -> bool {
+    true
+}
+
+/// Default maximum number of concurrent in-flight S3 requests.
+fn default_s3_max_concurrent_requests() -> usize {
+    100
 }
 
 /// Ethereum chain and NoxCompute contract configuration.
@@ -94,7 +114,7 @@ impl Config {
     /// Loads configuration from environment variables.
     ///
     /// Variables are prefixed `NOX_HANDLE_GATEWAY_` with `__` as the nested
-    /// separator (e.g. `NOX_HANDLE_GATEWAY_S3__BUCKET`). Secret-file variants
+    /// separator (e.g. `NOX_HANDLE_GATEWAY_S3__421614__BUCKET`). Secret-file variants
     /// are also supported via `config_secret`.
     pub fn load() -> Result<Self, ConfigError> {
         let config = ConfigBuilder::builder()
@@ -104,10 +124,6 @@ impl Config {
                 "server.cors_allowed_headers",
                 vec!["content-type", "authorization"],
             )?
-            .set_default("s3.bucket", "handles")?
-            .set_default("s3.max_concurrent_requests", 100)?
-            .set_default("s3.object_lock_enabled", true)?
-            .set_default("s3.timeout", 30)?
             .set_default("chain.id", 421614)?
             .set_default(
                 "chain.nox_compute_contract",
