@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-and-test:
-    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/rust-build.yml@rust-build-v2.1.0
+    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/rust-build.yml@rust-build-v3.3.0
     with:
       rust-version: '1.94.0'
       working-directory: "."
@@ -63,5 +63,7 @@ jobs:
       hadolint: true
       platform: linux/amd64
     secrets:
+      dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+      dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN_PULL_ONLY }}
       username: ${{ secrets.DOCKERREGIS_USERNAME }}
       password: ${{ secrets.DOCKERREGIS_PASSWORD }}
