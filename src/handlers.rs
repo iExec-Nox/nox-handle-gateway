@@ -109,10 +109,10 @@ pub struct GatewayDelegateResponse {
 /// - `500 Internal Server Error` — encryption, signing, or unexpected S3 error.
 pub async fn create_handle(
     State(state): State<AppState>,
-    Query(query): Query<QueryParams>,
+    Query(query_params): Query<QueryParams>,
     Json(request): Json<HandleRequest>,
 ) -> Result<Json<HandleResponse>, AppError> {
-    if let Some(requested) = query.chain_id
+    if let Some(requested) = query_params.chain_id
         && requested != state.config.chain.id
     {
         return Err(AppError::BadRequest(format!(
@@ -121,7 +121,7 @@ pub async fn create_handle(
         )));
     }
     let chain_id = state.config.chain.id;
-    let salt = extract_salt(query.salt)?;
+    let salt = extract_salt(query_params.salt)?;
     // Handle
     let plaintext = decode_and_validate_value(&request.value, &request.solidity_type)?;
     let ecies_ciphertext = state.crypto_svc.ecies_encrypt(&plaintext)?;
@@ -224,10 +224,10 @@ pub async fn create_handle(
 pub async fn get_handle_crypto_material(
     Path(handle): Path<String>,
     State(state): State<AppState>,
-    Query(query): Query<QueryParams>,
+    Query(query_params): Query<QueryParams>,
     headers: HeaderMap,
 ) -> Result<Json<GatewayDelegateResponse>, AppError> {
-    let salt = extract_salt(query.salt)?;
+    let salt = extract_salt(query_params.salt)?;
     info!(handle = handle, "get_handle_crypto_material query");
     let token_bytes = extract_authorization(headers)?;
     let authorization: GatewayDelegateAuthorization =
@@ -383,9 +383,9 @@ pub async fn get_handle_crypto_material(
 pub async fn public_decrypt(
     Path(handle): Path<String>,
     State(state): State<AppState>,
-    Query(query): Query<QueryParams>,
+    Query(query_params): Query<QueryParams>,
 ) -> Result<Json<PublicDecryptResponse>, AppError> {
-    let salt = extract_salt(query.salt)?;
+    let salt = extract_salt(query_params.salt)?;
     let handle_b256 = parse_handle(&handle)?;
     SolidityType::try_from(handle_b256[5])?;
 
@@ -626,10 +626,10 @@ pub struct ComputeResultResponse {
 ///   either due to an operand not retrieved from S3 or not prepared through the KMS.
 pub async fn get_operand_handles(
     State(state): State<AppState>,
-    Query(query): Query<QueryParams>,
+    Query(query_params): Query<QueryParams>,
     headers: HeaderMap,
 ) -> Result<Json<ComputeOperandResponse>, AppError> {
-    let salt = extract_salt(query.salt)?;
+    let salt = extract_salt(query_params.salt)?;
     let token_bytes = extract_authorization(headers)?;
     let authorization: ComputeOperandRequest =
         serde_json::from_slice(&token_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
@@ -761,11 +761,11 @@ async fn get_crypto_material_for_entry(
 /// - [`super::repository::S3Error`] if an error occurs during publishing.
 pub async fn publish_results(
     State(state): State<AppState>,
-    Query(query): Query<QueryParams>,
+    Query(query_params): Query<QueryParams>,
     headers: HeaderMap,
     Json(handles): Json<Vec<HandleEntryWithTag>>,
 ) -> Result<Json<ComputeResultResponse>, AppError> {
-    let salt = extract_salt(query.salt)?;
+    let salt = extract_salt(query_params.salt)?;
     let token_bytes = extract_authorization(headers)?;
     let authorization: ComputeResultRequest =
         serde_json::from_slice(&token_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
@@ -851,10 +851,10 @@ pub struct HandleStatusReportResponse {
 /// - `500 Internal Server Error` — unexpected S3 error (e.g. network failure or permission error).
 pub async fn handle_status(
     State(state): State<AppState>,
-    Query(query): Query<QueryParams>,
+    Query(query_params): Query<QueryParams>,
     Json(request): Json<HandleStatusRequest>,
 ) -> Result<Json<HandleStatusReportResponse>, AppError> {
-    let salt = extract_salt(query.salt)?;
+    let salt = extract_salt(query_params.salt)?;
     info!(count = request.handles.len(), "handle status request");
     let exists_map = state.repository.handles_exist(&request.handles).await?;
     let statuses: Vec<HandleResolution> = request

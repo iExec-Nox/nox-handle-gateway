@@ -85,6 +85,10 @@ impl DataRepository {
     /// Returns [`S3Error::NotFound`] rather than [`S3Error::UnknownChain`] when
     /// the chain ID is not configured because an unconfigured chain means the handle
     /// cannot exist, which is indistinguishable from a missing key to the caller.
+    // TODO: surface a richer not-found variant that distinguishes
+    // "no such key in the configured bucket" from "handle references a chain
+    // the gateway does not know" and includes the set of configured chain IDs
+    // so operators can spot misconfiguration quickly.
     pub async fn fetch_handle(&self, handle: &str) -> Result<HandleEntry, S3Error> {
         let chain_id = chain_id_from_handle(handle)?;
         match self.repo_for_chain(chain_id) {
@@ -126,10 +130,10 @@ impl DataRepository {
     /// chain ID is not configured are reported as `false` as the caller asked
     /// about existence and an unconfigured chain is a definitive "no".
     pub async fn handles_exist(&self, ids: &[String]) -> Result<HashMap<String, bool>, S3Error> {
-        let mut groups: HashMap<u32, Vec<&String>> = HashMap::new();
+        let mut groups: HashMap<u32, Vec<String>> = HashMap::new();
         for id in ids {
             let chain_id = chain_id_from_handle(id)?;
-            groups.entry(chain_id).or_default().push(id);
+            groups.entry(chain_id).or_default().push(id.clone());
         }
 
         let mut result = HashMap::with_capacity(ids.len());
@@ -138,14 +142,13 @@ impl DataRepository {
                 Ok(repo) => repo,
                 Err(S3Error::UnknownChain { .. }) => {
                     for id in group_ids {
-                        result.insert(id.clone(), false);
+                        result.insert(id, false);
                     }
                     continue;
                 }
                 Err(e) => return Err(e),
             };
-            let raw_ids: Vec<String> = group_ids.iter().map(|id| (*id).clone()).collect();
-            let group_result = repo.handles_exist(&raw_ids).await?;
+            let group_result = repo.handles_exist(&group_ids).await?;
             result.extend(group_result);
         }
         Ok(result)
