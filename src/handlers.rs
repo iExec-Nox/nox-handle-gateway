@@ -360,7 +360,6 @@ pub async fn get_handle_crypto_material(
         &payload.encryptionPubKey,
         signer,
         chain_id,
-        salt,
     )
     .await?;
 
@@ -423,7 +422,6 @@ pub async fn public_decrypt(
             &state.crypto_svc.rsa_public_key,
             signer,
             chain_id,
-            salt,
         )
         .await?;
 
@@ -710,7 +708,6 @@ pub async fn get_operand_handles(
                 &compute_request.rsaPublicKey,
                 signer,
                 chain_id,
-                salt,
             )
         }))
         .await
@@ -754,10 +751,9 @@ async fn get_crypto_material_for_entry(
     rsa_public_key: &str,
     signer: &PrivateKeySigner,
     chain_id: u32,
-    salt: B256,
 ) -> Result<HandleCryptoMaterial, AppError> {
     let encrypted_shared_secret = kms_client
-        .get_encrypted_shared_secret(&entry.public_key, rsa_public_key, signer, chain_id, salt)
+        .get_encrypted_shared_secret(&entry.public_key, rsa_public_key, signer, chain_id)
         .await?;
     info!(
         handle = entry.handle,
@@ -885,7 +881,6 @@ pub async fn handle_status(
 ) -> Result<Json<HandleStatusReportResponse>, AppError> {
     let salt = extract_salt(query_params.salt)?;
     info!(count = request.handles.len(), "handle status request");
-
     let chain_id = chain_id_from_handle(&request.handles[0])?;
     if !state.verify_chain(chain_id) {
         return Err(AppError::UnknownChain(chain_id));
@@ -898,7 +893,10 @@ pub async fn handle_status(
             )));
         }
     }
-    let exists_map = state.repository.handles_exist(&request.handles).await?;
+    let exists_map = state
+        .repository
+        .handles_exist(chain_id, &request.handles)
+        .await?;
     let statuses: Vec<HandleResolution> = request
         .handles
         .iter()

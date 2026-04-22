@@ -2,6 +2,7 @@ use alloy_primitives::{Address, B256, hex};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolStruct, eip712_domain};
+use k256::elliptic_curve::rand_core::{OsRng, RngCore};
 use reqwest::{Client, header::AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -94,13 +95,8 @@ impl KmsClient {
         target_pub_key: &str,
         signer: &PrivateKeySigner,
         chain_id: u32,
-        salt: B256,
     ) -> Result<String, Error> {
-        let url = format!(
-            "{}/v0/delegate?chain_id={chain_id}&salt={}",
-            self.base_url,
-            hex::encode_prefixed(salt)
-        );
+        let url = format!("{}/v0/delegate", self.base_url);
 
         let authorization =
             self.build_delegate_authorization(ephemeral_pub_key, target_pub_key, signer, chain_id)?;
@@ -116,10 +112,18 @@ impl KmsClient {
             target_pub_key: target_pub_key.to_string(),
         };
 
+        let mut salt_bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut salt_bytes);
+        let salt = B256::from(salt_bytes);
+
         let response = self
             .client
             .post(&url)
             .header(AUTHORIZATION, format!("Bearer {authorization}"))
+            .query(&[
+                ("chain_id", chain_id.to_string()),
+                ("salt", hex::encode_prefixed(salt)),
+            ])
             .json(&request_body)
             .send()
             .await?;

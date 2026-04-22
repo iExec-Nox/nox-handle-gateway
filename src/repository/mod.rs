@@ -119,36 +119,15 @@ impl DataRepository {
         self.repo_for_chain(chain_id)?.read_handles(ids).await
     }
 
-    /// Checks existence of handles across chains, one bucket call per chain.
+    /// Checks existence of handles within a single chain's bucket.
     ///
-    /// Handles are grouped by their embedded chain ID so each
-    /// [`BucketRepository`] is queried once with its subset. Handles whose
-    /// chain ID is not configured are reported as `false` as the caller asked
-    /// about existence and an unconfigured chain is a definitive "no".
-    pub async fn handles_exist(&self, ids: &[String]) -> Result<HashMap<String, bool>, S3Error> {
-        let mut groups: HashMap<u32, Vec<String>> = HashMap::new();
-        for id in ids {
-            let chain_id = chain_id_from_handle(id).map_err(|e| S3Error::InvalidHandle {
-                reason: e.to_string(),
-            })?;
-            groups.entry(chain_id).or_default().push(id.clone());
-        }
-
-        let mut result = HashMap::with_capacity(ids.len());
-        for (chain_id, group_ids) in groups {
-            let repo = match self.repo_for_chain(chain_id) {
-                Ok(repo) => repo,
-                Err(S3Error::UnknownChain { .. }) => {
-                    for id in group_ids {
-                        result.insert(id, false);
-                    }
-                    continue;
-                }
-                Err(e) => return Err(e),
-            };
-            let group_result = repo.handles_exist(&group_ids).await?;
-            result.extend(group_result);
-        }
-        Ok(result)
+    /// The caller is responsible for ensuring all `ids` belong to `chain_id`
+    /// and that `chain_id` is a configured chain.
+    pub async fn handles_exist(
+        &self,
+        chain_id: u32,
+        ids: &[String],
+    ) -> Result<HashMap<String, bool>, S3Error> {
+        self.repo_for_chain(chain_id)?.handles_exist(ids).await
     }
 }
