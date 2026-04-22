@@ -885,35 +885,18 @@ pub async fn handle_status(
 ) -> Result<Json<HandleStatusReportResponse>, AppError> {
     let salt = extract_salt(query_params.salt)?;
     info!(count = request.handles.len(), "handle status request");
-    let chain_ids: Result<Vec<u32>, _> = request
-        .handles
-        .iter()
-        .map(|h| chain_id_from_handle(h))
-        .collect();
-    let chain_ids = chain_ids?;
-    let mut known_chain_ids: Vec<u32> = chain_ids
-        .iter()
-        .copied()
-        .filter(|&id| state.config.chains.contains_key(&id))
-        .collect();
-    known_chain_ids.sort_unstable();
-    known_chain_ids.dedup();
-    if known_chain_ids.len() > 1 {
-        return Err(AppError::BadRequest(format!(
-            "mixed-chain handle batch not supported: chain IDs {known_chain_ids:?}",
-        )));
-    } else if known_chain_ids.is_empty() {
-        return Err(AppError::BadRequest(
-            "no supported chain IDs were found in the request".to_string(),
-        ));
-    }
-    #[expect(
-        clippy::unwrap_used,
-        reason = "Panic case is impossible due to prior validation"
-    )]
-    let chain_id: u32 = known_chain_ids.into_iter().next().unwrap();
+
+    let chain_id = chain_id_from_handle(&request.handles[0])?;
     if !state.verify_chain(chain_id) {
         return Err(AppError::UnknownChain(chain_id));
+    }
+    for handle in request.handles.clone() {
+        let handle_chain_id = chain_id_from_handle(&handle)?;
+        if chain_id != handle_chain_id {
+            return Err(AppError::BadRequest(format!(
+                "mixed-chain handle batch not supported. Found at least two different chain IDs: {chain_id} and {handle_chain_id}",
+            )));
+        }
     }
     let exists_map = state.repository.handles_exist(&request.handles).await?;
     let statuses: Vec<HandleResolution> = request
