@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, hex};
+use alloy_primitives::{Address, B256, hex};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolStruct, eip712_domain};
@@ -94,8 +94,13 @@ impl KmsClient {
         target_pub_key: &str,
         signer: &PrivateKeySigner,
         chain_id: u32,
+        salt: B256,
     ) -> Result<String, Error> {
-        let url = format!("{}/v0/delegate?chain_id={chain_id}", self.base_url);
+        let url = format!(
+            "{}/v0/delegate?chain_id={chain_id}&salt={}",
+            self.base_url,
+            hex::encode_prefixed(salt)
+        );
 
         let authorization =
             self.build_delegate_authorization(ephemeral_pub_key, target_pub_key, signer, chain_id)?;
@@ -131,7 +136,7 @@ impl KmsClient {
             .await
             .map_err(|e| Error::InvalidResponse(e.to_string()))?;
 
-        self.verify_delegate_response(&data, chain_id)?;
+        self.verify_delegate_response(&data, chain_id, salt)?;
 
         Ok(data.encrypted_shared_secret)
     }
@@ -143,6 +148,7 @@ impl KmsClient {
         &self,
         response: &KmsDelegateResponse,
         chain_id: u32,
+        salt: B256,
     ) -> Result<(), Error> {
         let response_struct = DelegateResponseProof {
             encryptedSharedSecret: response.encrypted_shared_secret.clone(),
@@ -152,6 +158,7 @@ impl KmsClient {
             name: PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME,
             version: EIP_712_DOMAIN_VERSION,
             chain_id: u64::from(chain_id),
+            salt: salt,
         };
 
         let signing_hash = response_struct.eip712_signing_hash(&domain);

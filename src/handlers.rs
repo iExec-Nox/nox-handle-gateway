@@ -355,6 +355,7 @@ pub async fn get_handle_crypto_material(
         &payload.encryptionPubKey,
         signer,
         chain_id,
+        salt,
     )
     .await?;
 
@@ -415,6 +416,7 @@ pub async fn public_decrypt(
             &state.crypto_svc.rsa_public_key,
             signer,
             chain_id,
+            salt,
         )
         .await?;
 
@@ -699,6 +701,7 @@ pub async fn get_operand_handles(
                 &compute_request.rsaPublicKey,
                 signer,
                 chain_id,
+                salt,
             )
         }))
         .await
@@ -742,9 +745,10 @@ async fn get_crypto_material_for_entry(
     rsa_public_key: &str,
     signer: &PrivateKeySigner,
     chain_id: u32,
+    salt: B256,
 ) -> Result<HandleCryptoMaterial, AppError> {
     let encrypted_shared_secret = kms_client
-        .get_encrypted_shared_secret(&entry.public_key, rsa_public_key, signer, chain_id)
+        .get_encrypted_shared_secret(&entry.public_key, rsa_public_key, signer, chain_id, salt)
         .await?;
     info!(
         handle = entry.handle,
