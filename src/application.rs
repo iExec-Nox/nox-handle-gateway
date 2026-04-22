@@ -19,9 +19,8 @@ use tokio::{net::TcpListener, signal};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{debug, info, warn};
 
-use crate::config::{Config, PerChainConfig};
+use crate::config::Config;
 use crate::crypto::CryptoService;
-use crate::error::AppError;
 use crate::handlers;
 use crate::kms::KmsClient;
 use crate::repository::DataRepository;
@@ -43,26 +42,9 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Returns the [`NoxClient`] for `chain_id`, or [`AppError::UnknownChain`].
-    pub fn nox_client(&self, chain_id: u32) -> Result<&NoxClient, AppError> {
-        self.nox_clients
-            .get(&chain_id)
-            .ok_or(AppError::UnknownChain(chain_id))
-    }
-
-    /// Returns the [`PerChainConfig`] for `chain_id`, or [`AppError::UnknownChain`].
-    pub fn chain_cfg(&self, chain_id: u32) -> Result<&PerChainConfig, AppError> {
-        self.config
-            .chains
-            .get(&chain_id)
-            .ok_or(AppError::UnknownChain(chain_id))
-    }
-
-    /// Returns the [`PrivateKeySigner`] for `chain_id`, or [`AppError::UnknownChain`].
-    pub fn signer(&self, chain_id: u32) -> Result<&PrivateKeySigner, AppError> {
-        self.signers
-            .get(&chain_id)
-            .ok_or(AppError::UnknownChain(chain_id))
+    /// Verify that a `chain_id` is configured
+    pub fn verify_chain(&self, chain_id: u32) -> bool {
+        self.config.chains.contains_key(&chain_id)
     }
 }
 
@@ -157,7 +139,7 @@ impl Application {
             let chain_id = *chain_id;
 
             let nox_client =
-                NoxClient::new(&chain_cfg.rpc_url, chain_cfg.nox_compute_contract).await?;
+                NoxClient::new(&chain_cfg.rpc_url, chain_cfg.nox_compute_contract_address).await?;
 
             let kms_public_key = nox_client.kms_public_key().await?;
 
@@ -174,7 +156,7 @@ impl Application {
             }
 
             info!(
-                nox_compute = %chain_cfg.nox_compute_contract,
+                nox_compute = %chain_cfg.nox_compute_contract_address,
                 rpc = %chain_cfg.rpc_url,
                 kms_pubkey = %hex::encode(&kms_public_key.to_sec1_bytes()[..4]),
                 gateway_addr = %onchain_gateway,

@@ -6,10 +6,6 @@ use config_secret::EnvironmentSecretFile;
 use serde::Deserialize;
 use tracing::debug;
 
-/// Default fallback chain ID used when none is past in the current optional query parameter.
-// TODO: Remove when SDK supports chain ID query param.
-pub const DEFAULT_CHAIN_ID: u32 = 421614;
-
 /// Top-level application configuration loaded from environment variables.
 ///
 /// All fields are populated by [`Config::load`]. Most have sensible defaults;
@@ -20,6 +16,9 @@ pub struct Config {
     pub chains: HashMap<u32, PerChainConfig>,
     pub kms: KmsConfig,
     pub runner_address: Address,
+    /// Fallback chain ID when the SDK omits the `chain_id` query parameter.
+    // TODO: Remove when SDK supports chain ID query param.
+    pub default_chain_id: u32,
 }
 
 /// HTTP server bind configuration.
@@ -48,7 +47,7 @@ pub struct ServerConfig {
 /// it supports both single-key and per-chain-key deployments without special-casing.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PerChainConfig {
-    pub nox_compute_contract: Address,
+    pub nox_compute_contract_address: Address,
     pub rpc_url: String,
     pub s3: S3Config,
     pub wallet_key: String,
@@ -129,6 +128,7 @@ impl Config {
                 "runner_address",
                 "0x0000000000000000000000000000000000000000",
             )?
+            .set_default("default_chain_id", 421614)?
             .add_source(
                 Environment::with_prefix("NOX_HANDLE_GATEWAY")
                     .prefix_separator("_")
