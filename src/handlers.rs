@@ -20,11 +20,12 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
 use crate::application::AppState;
+use crate::config::DEFAULT_CHAIN_ID;
 use crate::error::AppError;
 use crate::kms::KmsClient;
 use crate::repository::{HandleEntry, HandleS3Metadata};
 use crate::types::{DataAccessAuthorization, DecryptionProof, Handle, HandleProof, SolidityType};
-use crate::validation::{decode_and_validate_value, parse_handle};
+use crate::validation::{chain_id_from_handle, decode_and_validate_value, parse_handle};
 
 /// EIP-712 domain name for HandleProof generation.
 const NOX_COMPUTE_EIP712_DOMAIN_NAME: &str = "NoxCompute";
@@ -39,8 +40,9 @@ const MAX_AUTHORIZATION_VALIDITY_WINDOW_SECS: u64 = 3600;
 ///   response-signing domain so callers can associate a response with a
 ///   specific request. Absent → `bytes32(0)`.
 /// - `chain_id` — only meaningful on `POST /v0/secrets`. Optional; when
-///   provided it must equal `config.chain.id`, otherwise the request is
-///   rejected (400). When absent the gateway falls back to `config.chain.id`.
+///   provided it must correspond to a configured chain, otherwise the request
+///   is rejected (400). When absent the gateway falls back to the default configured
+///   chain ID and logs a WARN.
 ///   Other endpoints ignore this field.
 #[derive(Debug, Deserialize)]
 pub struct QueryParams {
@@ -95,16 +97,16 @@ pub struct GatewayDelegateResponse {
 ///
 /// Route: `POST /v0/secrets`
 ///
-/// The `chain_id` query parameter is optional. When provided it must equal
-/// `config.chain.id`; any other value is rejected with 400. When absent the
-/// gateway falls back to `config.chain.id`. This temporary shape anticipates a
-/// future multi-chain write path.
+/// The `chain_id` query parameter is optional. When provided it must correspond
+/// to a configured chain; any other value is rejected with 400. When absent the
+/// gateway falls back to the default configured chain ID and logs a WARN.
 ///
 /// # HTTP responses
 ///
 /// - `200 OK` — JSON `{ "payload": { "handle": "0x...", "proof": "0x..." }, "signature": "0x..." }`.
-/// - `400 Bad Request` — `chain_id` query param present but not equal to `config.chain.id`;
-///   `value` does not match the declared `solidityType`; or `salt` is malformed.
+/// - `400 Bad Request` — `chain_id` query param present but not a configured chain;
+///   `value` does not match the declared `solidityType`; `salt` is malformed; or incorrect input
+///   data are given through the request.
 /// - `409 Conflict` — handle already exists in S3.
 /// - `500 Internal Server Error` — encryption, signing, or unexpected S3 error.
 pub async fn create_handle(
@@ -112,19 +114,22 @@ pub async fn create_handle(
     Query(query_params): Query<QueryParams>,
     Json(request): Json<HandleRequest>,
 ) -> Result<Json<HandleResponse>, AppError> {
-    if let Some(requested) = query_params.chain_id
-        && requested != state.config.chain.id
-    {
-        return Err(AppError::BadRequest(format!(
-            "chain_id {requested} not supported; expected {}",
-            state.config.chain.id,
-        )));
-    }
-    let chain_id = state.config.chain.id;
+    let chain_id = match query_params.chain_id {
+        Some(requested) => requested,
+        None => {
+            let fallback = DEFAULT_CHAIN_ID;
+            warn!(
+                chain_id = fallback,
+                "chain_id absent from request, falling back to default configured chain"
+            );
+            fallback
+        }
+    };
+    let chain_cfg = state.chain_cfg(chain_id)?;
     let salt = extract_salt(query_params.salt)?;
     // Handle
     let plaintext = decode_and_validate_value(&request.value, &request.solidity_type)?;
-    let ecies_ciphertext = state.crypto_svc.ecies_encrypt(&plaintext)?;
+    let ecies_ciphertext = state.crypto_svc.ecies_encrypt(chain_id, &plaintext)?;
 
     let data_type = request.solidity_type.to_string();
     let handle = Handle::new(chain_id, request.solidity_type).to_bytes();
@@ -165,8 +170,8 @@ pub async fn create_handle(
     let nox_compute_domain = eip712_domain! {
         name: NOX_COMPUTE_EIP712_DOMAIN_NAME,
         version: "1",
-        chain_id: u64::from(state.config.chain.id),
-        verifying_contract: state.config.chain.nox_compute_contract,
+        chain_id: u64::from(chain_id),
+        verifying_contract: chain_cfg.nox_compute_contract,
     };
 
     let created_at = U256::from(metadata.created_at.and_utc().timestamp());
@@ -177,8 +182,8 @@ pub async fn create_handle(
         createdAt: created_at,
     };
 
-    let handle_proof_signature = state
-        .signer
+    let signer = state.signer(chain_id)?;
+    let handle_proof_signature = signer
         .sign_typed_data_sync(&proof, &nox_compute_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .as_bytes();
@@ -189,9 +194,8 @@ pub async fn create_handle(
         handle: serialized_handle,
         proof: serialized_handle_proof,
     };
-    let response_domain = handle_gateway_response_domain(state.config.chain.id, salt);
-    let handle_response_signature = state
-        .signer
+    let response_domain = handle_gateway_response_domain(chain_id, salt);
+    let handle_response_signature = signer
         .sign_typed_data_sync(&handle_with_proof, &response_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();
@@ -228,6 +232,8 @@ pub async fn get_handle_crypto_material(
     headers: HeaderMap,
 ) -> Result<Json<GatewayDelegateResponse>, AppError> {
     let salt = extract_salt(query_params.salt)?;
+    let chain_id = chain_id_from_handle(&handle)?;
+    let chain_cfg = state.chain_cfg(chain_id)?;
     info!(handle = handle, "get_handle_crypto_material query");
     let token_bytes = extract_authorization(headers)?;
     let authorization: GatewayDelegateAuthorization =
@@ -274,8 +280,8 @@ pub async fn get_handle_crypto_material(
     let auth_domain = eip712_domain! {
         name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
         version: "1",
-        chain_id: u64::from(state.config.chain.id),
-        verifying_contract: state.config.chain.nox_compute_contract,
+        chain_id: u64::from(chain_id),
+        verifying_contract: chain_cfg.nox_compute_contract,
     };
     let hash = payload.eip712_signing_hash(&auth_domain);
     let signature_bytes =
@@ -314,14 +320,14 @@ pub async fn get_handle_crypto_material(
         }
     };
 
+    let nox_client = state.nox_client(chain_id)?;
     if !is_valid_ec_sig {
         warn!(
             handle,
             user = payload.userAddress.to_string(),
             "attempting ERC-1271 fallback",
         );
-        state
-            .nox_client
+        nox_client
             .verify_erc1271(hash, &signature_bytes, payload.userAddress)
             .await
             .map_err(|e| {
@@ -335,26 +341,25 @@ pub async fn get_handle_crypto_material(
     }
 
     let handle_b256 = parse_handle(&handle)?;
-    state
-        .nox_client
+    nox_client
         .check_access(handle_b256, payload.userAddress)
         .await?;
 
     let entry = state.repository.fetch_handle(&handle).await?;
 
+    let signer = state.signer(chain_id)?;
     info!(handle, "decryption delegation request");
     let crypto_material = get_crypto_material_for_entry(
         state.kms_client.clone(),
         &entry,
         &payload.encryptionPubKey,
-        &state.signer,
-        state.config.chain.id,
+        signer,
+        chain_id,
     )
     .await?;
 
-    let response_domain = handle_gateway_response_domain(state.config.chain.id, salt);
-    let signature = state
-        .signer
+    let response_domain = handle_gateway_response_domain(chain_id, salt);
+    let signature = signer
         .sign_typed_data_sync(&crypto_material, &response_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();
@@ -388,15 +393,19 @@ pub async fn public_decrypt(
     let salt = extract_salt(query_params.salt)?;
     let handle_b256 = parse_handle(&handle)?;
     SolidityType::try_from(handle_b256[5])?;
+    let chain_id = chain_id_from_handle(&handle)?;
+    let chain_cfg = state.chain_cfg(chain_id)?;
 
     info!(handle = %handle, "public_decrypt query");
 
     state
-        .nox_client
+        .nox_client(chain_id)?
         .is_publicly_decryptable(handle_b256)
         .await?;
 
     let entry = state.repository.fetch_handle(&handle).await?;
+
+    let signer = state.signer(chain_id)?;
 
     // KMS delegate → encrypted shared secret
     let encrypted_shared_secret = state
@@ -404,8 +413,8 @@ pub async fn public_decrypt(
         .get_encrypted_shared_secret(
             &entry.public_key,
             &state.crypto_svc.rsa_public_key,
-            &state.signer,
-            state.config.chain.id,
+            signer,
+            chain_id,
         )
         .await?;
 
@@ -420,15 +429,14 @@ pub async fn public_decrypt(
     let nox_compute_domain = eip712_domain! {
         name: NOX_COMPUTE_EIP712_DOMAIN_NAME,
         version: "1",
-        chain_id: u64::from(state.config.chain.id),
-        verifying_contract: state.config.chain.nox_compute_contract,
+        chain_id: u64::from(chain_id),
+        verifying_contract: chain_cfg.nox_compute_contract,
     };
     let proof_struct = DecryptionProof {
         handle: handle_b256,
         decryptedResult: Bytes::from(decrypted_result.clone()),
     };
-    let signature = state
-        .signer
+    let signature = signer
         .sign_typed_data_sync(&proof_struct, &nox_compute_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .as_bytes();
@@ -441,9 +449,8 @@ pub async fn public_decrypt(
     let result_payload = PublicDecryptionResult {
         decryptionProof: hex::encode_prefixed(serialized),
     };
-    let response_domain = handle_gateway_response_domain(state.config.chain.id, salt);
-    let public_decrypt_response_signature = state
-        .signer
+    let response_domain = handle_gateway_response_domain(chain_id, salt);
+    let public_decrypt_response_signature = signer
         .sign_typed_data_sync(&result_payload, &response_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();
@@ -478,6 +485,7 @@ sol! {
     /// the query comes from a known Runner.
     #[derive(Deserialize)]
     struct OperandAccessAuthorization {
+        uint256 chainId;
         address caller;
         string[] operands;
         string rsaPublicKey;
@@ -634,12 +642,17 @@ pub async fn get_operand_handles(
     let authorization: ComputeOperandRequest =
         serde_json::from_slice(&token_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
 
+    let compute_request = authorization.payload;
+    let chain_id = u32::try_from(compute_request.chainId).map_err(|_| {
+        AppError::BadRequest(format!("chainId {} overflows u32", compute_request.chainId))
+    })?;
+    state.chain_cfg(chain_id)?;
+
     let auth_domain = eip712_domain! {
         name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
         version: "1",
-        chain_id: u64::from(state.config.chain.id),
+        chain_id: u64::from(chain_id),
     };
-    let compute_request = authorization.payload;
     let hash = compute_request.eip712_signing_hash(&auth_domain);
     recover_and_check_address(
         &state.config.runner_address,
@@ -653,7 +666,7 @@ pub async fn get_operand_handles(
 
     let operand_handles: Vec<HandleEntry> = state
         .repository
-        .read_handles(state.config.chain.id, &compute_request.operands)
+        .read_handles(chain_id, &compute_request.operands)
         .await?;
     debug!("operand handles count {}", operand_handles.len());
     if operand_handles.len() != operands_expected_count {
@@ -677,14 +690,15 @@ pub async fn get_operand_handles(
         ));
     }
 
+    let signer = state.signer(chain_id)?;
     let operands_crypto_material: Vec<HandleCryptoMaterial> =
         join_all(operand_handles.iter().map(|entry| {
             get_crypto_material_for_entry(
                 state.kms_client.clone(),
                 entry,
                 &compute_request.rsaPublicKey,
-                &state.signer,
-                state.config.chain.id,
+                signer,
+                chain_id,
             )
         }))
         .await
@@ -713,9 +727,8 @@ pub async fn get_operand_handles(
         operands: operands_crypto_material,
     };
 
-    let response_domain = handle_gateway_response_domain(state.config.chain.id, salt);
-    let signature = state
-        .signer
+    let response_domain = handle_gateway_response_domain(chain_id, salt);
+    let signature = signer
         .sign_typed_data_sync(&payload, &response_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();
@@ -774,6 +787,7 @@ pub async fn publish_results(
     let chain_id = u32::try_from(compute_result.chainId).map_err(|_| {
         AppError::BadRequest(format!("chainId {} overflows u32", compute_result.chainId))
     })?;
+    state.chain_cfg(chain_id)?;
     let auth_domain = eip712_domain! {
         name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
         version: "1",
@@ -789,9 +803,9 @@ pub async fn publish_results(
     let total = handles.len();
     info!(
         count = total,
-        chain_id = compute_result.chainId.to_string(),
-        block_number = compute_result.blockNumber.to_string(),
-        transaction_hash = compute_result.transactionHash.to_string(),
+        chain_id = %compute_result.chainId,
+        block_number = %compute_result.blockNumber,
+        transaction_hash = %compute_result.transactionHash,
         "publishing result handles to S3"
     );
     let summary = state
@@ -811,9 +825,9 @@ pub async fn publish_results(
         ),
     };
 
+    let signer = state.signer(chain_id)?;
     let response_domain = handle_gateway_response_domain(chain_id, salt);
-    let signature = state
-        .signer
+    let signature = signer
         .sign_typed_data_sync(&payload, &response_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();
@@ -856,6 +870,30 @@ pub async fn handle_status(
 ) -> Result<Json<HandleStatusReportResponse>, AppError> {
     let salt = extract_salt(query_params.salt)?;
     info!(count = request.handles.len(), "handle status request");
+    let chain_ids: Result<Vec<u32>, _> = request
+        .handles
+        .iter()
+        .map(|h| chain_id_from_handle(h))
+        .collect();
+    let chain_ids = chain_ids?;
+    let mut known_chain_ids: Vec<u32> = chain_ids
+        .iter()
+        .copied()
+        .filter(|&id| state.config.chains.contains_key(&id))
+        .collect();
+    known_chain_ids.sort_unstable();
+    known_chain_ids.dedup();
+    if known_chain_ids.len() > 1 {
+        return Err(AppError::BadRequest(format!(
+            "mixed-chain handle batch not supported: chain IDs {known_chain_ids:?}",
+        )));
+    }
+    let chain_id = known_chain_ids.into_iter().next().unwrap_or_else(|| {
+        chain_ids
+            .first()
+            .copied()
+            .expect("non-empty after early return")
+    });
     let exists_map = state.repository.handles_exist(&request.handles).await?;
     let statuses: Vec<HandleResolution> = request
         .handles
@@ -866,9 +904,19 @@ pub async fn handle_status(
         })
         .collect();
     let payload = HandleStatusReport { statuses };
-    let response_domain = handle_gateway_response_domain(state.config.chain.id, salt);
-    let signature = state
-        .signer
+    let signing_chain_id = if state.signer(chain_id).is_ok() {
+        chain_id
+    } else {
+        *state
+            .config
+            .chains
+            .keys()
+            .min()
+            .expect("at least one chain configured")
+    };
+    let signer = state.signer(signing_chain_id)?;
+    let response_domain = handle_gateway_response_domain(signing_chain_id, salt);
+    let signature = signer
         .sign_typed_data_sync(&payload, &response_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();

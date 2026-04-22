@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use aes_gcm::{
     Aes256Gcm, Nonce,
     aead::{Aead, KeyInit, generic_array::GenericArray},
@@ -31,6 +33,10 @@ pub enum Error {
     EciesDecryptionError(String),
     #[error("HKDF error: {0}")]
     HkdfError(String),
+    #[error("protocol key map must not be empty")]
+    EmptyKeyMap,
+    #[error("no KMS public key for chain_id {0}")]
+    UnknownChain(u32),
     #[error("RSA key generation error: {0}")]
     RsaKeyGenError(String),
     #[error("Signer error: {0}")]
@@ -45,22 +51,25 @@ pub struct EciesCiphertext {
     pub ciphertext: Vec<u8>,
 }
 
-/// Crypto service owning the KMS protocol key and the gateway RSA-2048 key pair.
+/// Crypto service owning the KMS protocol keys (one per chain) and the gateway RSA-2048 key pair.
 ///
-/// - `protocol_key`: KMS EC public key used to ECIES-encrypt plaintext values.
+/// - `protocol_keys`: map of chain_id → KMS EC public key used to ECIES-encrypt plaintext values.
 /// - `rsa_public_hex`: gateway RSA public key sent to the KMS delegate endpoint
 ///   so the KMS can encrypt the shared secret back to the gateway.
 /// - `private`: gateway RSA private key used to RSA-OAEP decrypt that response.
 #[derive(Clone)]
 pub struct CryptoService {
-    protocol_key: PublicKey,
+    protocol_keys: HashMap<u32, PublicKey>,
     private: RsaPrivateKey,
     pub rsa_public_key: String,
 }
 
 impl CryptoService {
-    /// Initialises the crypto service with the KMS protocol key and a fresh RSA-2048 key pair.
-    pub fn new(protocol_key: PublicKey) -> Result<Self, Error> {
+    /// Initialises the crypto service with a per-chain KMS protocol key map and a fresh RSA-2048 key pair.
+    pub fn new(protocol_keys: HashMap<u32, PublicKey>) -> Result<Self, Error> {
+        if protocol_keys.is_empty() {
+            return Err(Error::EmptyKeyMap);
+        }
         let key = RsaPrivateKey::new(&mut OsRng, 2048)
             .map_err(|e| Error::RsaKeyGenError(e.to_string()))?;
         let rsa_public_key = hex::encode_prefixed(
@@ -68,22 +77,25 @@ impl CryptoService {
                 .to_public_key_der()
                 .map_err(|e| Error::RsaKeyGenError(e.to_string()))?,
         );
-        info!(
-            protocol_key = %hex::encode_prefixed(protocol_key.to_sec1_bytes()),
-            rsa_public_key,
-            "Crypto service initialized"
-        );
+        for (chain_id, pk) in &protocol_keys {
+            let kms_pubkey = &hex::encode(pk.to_sec1_bytes());
+            info!("KMS public key {kms_pubkey} loaded for chain {chain_id}");
+        }
         Ok(Self {
-            protocol_key,
+            protocol_keys,
             private: key,
             rsa_public_key,
         })
     }
 
-    /// Encrypts plaintext using ECIES with the KMS protocol key.
-    pub fn ecies_encrypt(&self, plaintext: &[u8]) -> Result<EciesCiphertext, Error> {
+    /// Encrypts plaintext using ECIES with the KMS protocol key for the given chain.
+    pub fn ecies_encrypt(&self, chain_id: u32, plaintext: &[u8]) -> Result<EciesCiphertext, Error> {
+        let protocol_key = self
+            .protocol_keys
+            .get(&chain_id)
+            .ok_or(Error::UnknownChain(chain_id))?;
         let ephemeral_secret = EphemeralSecret::random(&mut OsRng);
-        let shared_secret = ephemeral_secret.diffie_hellman(&self.protocol_key);
+        let shared_secret = ephemeral_secret.diffie_hellman(protocol_key);
         let hkdf = Hkdf::<Sha256>::new(None, shared_secret.raw_secret_bytes());
         let mut aes_key = [0u8; 32];
         hkdf.expand(ECIES_CONTEXT, &mut aes_key)

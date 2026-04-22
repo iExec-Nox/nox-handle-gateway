@@ -95,7 +95,7 @@ impl KmsClient {
         signer: &PrivateKeySigner,
         chain_id: u32,
     ) -> Result<String, Error> {
-        let url = format!("{}/v0/delegate", self.base_url);
+        let url = format!("{}/v0/delegate?chain_id={chain_id}", self.base_url);
 
         let authorization =
             self.build_delegate_authorization(ephemeral_pub_key, target_pub_key, signer, chain_id)?;

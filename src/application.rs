@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use alloy_primitives::hex;
 use alloy_signer_local::PrivateKeySigner;
 use axum::{
     Json, Router,
@@ -16,8 +19,9 @@ use tokio::{net::TcpListener, signal};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{debug, info, warn};
 
-use crate::config::Config;
+use crate::config::{Config, PerChainConfig};
 use crate::crypto::CryptoService;
+use crate::error::AppError;
 use crate::handlers;
 use crate::kms::KmsClient;
 use crate::repository::DataRepository;
@@ -29,13 +33,37 @@ const VERSIONED_PATHS: &str = "/v0/{*path}";
 /// Shared application state injected into every Axum handler via [`State`].
 #[derive(Clone)]
 pub struct AppState {
-    pub nox_client: NoxClient,
+    pub nox_clients: HashMap<u32, NoxClient>,
     pub config: Config,
     pub crypto_svc: CryptoService,
     pub kms_client: KmsClient,
     pub metrics_handle: PrometheusHandle,
     pub repository: DataRepository,
-    pub signer: PrivateKeySigner,
+    pub signers: HashMap<u32, PrivateKeySigner>,
+}
+
+impl AppState {
+    /// Returns the [`NoxClient`] for `chain_id`, or [`AppError::UnknownChain`].
+    pub fn nox_client(&self, chain_id: u32) -> Result<&NoxClient, AppError> {
+        self.nox_clients
+            .get(&chain_id)
+            .ok_or(AppError::UnknownChain(chain_id))
+    }
+
+    /// Returns the [`PerChainConfig`] for `chain_id`, or [`AppError::UnknownChain`].
+    pub fn chain_cfg(&self, chain_id: u32) -> Result<&PerChainConfig, AppError> {
+        self.config
+            .chains
+            .get(&chain_id)
+            .ok_or(AppError::UnknownChain(chain_id))
+    }
+
+    /// Returns the [`PrivateKeySigner`] for `chain_id`, or [`AppError::UnknownChain`].
+    pub fn signer(&self, chain_id: u32) -> Result<&PrivateKeySigner, AppError> {
+        self.signers
+            .get(&chain_id)
+            .ok_or(AppError::UnknownChain(chain_id))
+    }
 }
 
 /// Top-level application builder and entry point.
@@ -96,10 +124,12 @@ impl Application {
     ///
     /// Startup order:
     /// 1. Validate CORS allowed headers from config
-    /// 2. Load EIP-712 signer from `config.signer.wallet_key`
-    /// 3. Connect to NoxCompute on-chain, fetch the KMS public key
-    /// 4. Build [`KmsClient`] and validate the S3 bucket
-    /// 5. Bind the TCP listener and serve until `SIGTERM` / `Ctrl+C`
+    /// 2. Validate at least one chain is configured
+    /// 3. For each chain: connect to NoxCompute, fetch KMS public key, load signer,
+    ///    cross-check signer address against on-chain `gateway()` address
+    /// 4. Build [`CryptoService`] with per-chain KMS public keys
+    /// 5. Build [`KmsClient`] and validate S3 buckets
+    /// 6. Bind the TCP listener and serve until `SIGTERM` / `Ctrl+C`
     pub async fn run(self) -> anyhow::Result<()> {
         let cors_allowed_headers: Vec<HeaderName> = self
             .config
@@ -115,32 +145,64 @@ impl Application {
             })
             .collect::<anyhow::Result<_>>()?;
 
-        let signer = CryptoService::load_signer(&self.config.signer.wallet_key)?;
-        info!("EIP-712 signer address: {}", signer.address());
+        if self.config.chains.is_empty() {
+            anyhow::bail!("at least one chain must be configured");
+        }
 
-        let nox_client: NoxClient = NoxClient::new(
-            &self.config.chain.rpc_url,
-            self.config.chain.nox_compute_contract,
-        )
-        .await?;
-        let kms_public_key = nox_client.kms_public_key().await?;
-        let crypto_svc = CryptoService::new(kms_public_key)?;
+        let mut nox_clients: HashMap<u32, NoxClient> = HashMap::new();
+        let mut protocol_keys = HashMap::new();
+        let mut signers: HashMap<u32, PrivateKeySigner> = HashMap::new();
+
+        for (chain_id, chain_cfg) in &self.config.chains {
+            let chain_id = *chain_id;
+
+            let nox_client =
+                NoxClient::new(&chain_cfg.rpc_url, chain_cfg.nox_compute_contract).await?;
+
+            let kms_public_key = nox_client.kms_public_key().await?;
+
+            let signer = CryptoService::load_signer(&chain_cfg.wallet_key)?;
+
+            let onchain_gateway = nox_client.gateway_address().await?;
+
+            if signer.address() != onchain_gateway {
+                anyhow::bail!(
+                    "chain {chain_id}: wallet address {} does not match on-chain gateway {}",
+                    signer.address(),
+                    onchain_gateway
+                );
+            }
+
+            info!(
+                nox_compute = %chain_cfg.nox_compute_contract,
+                rpc = %chain_cfg.rpc_url,
+                kms_pubkey = %hex::encode(&kms_public_key.to_sec1_bytes()[..4]),
+                gateway_addr = %onchain_gateway,
+                "Chain configuration complete for chain {chain_id}"
+            );
+
+            nox_clients.insert(chain_id, nox_client);
+            protocol_keys.insert(chain_id, kms_public_key);
+            signers.insert(chain_id, signer);
+        }
+
+        let crypto_svc = CryptoService::new(protocol_keys)?;
         let kms_client =
             KmsClient::new(self.config.kms.url.clone(), self.config.kms.signer_address)?;
-        let repository = DataRepository::new(&self.config.s3).await?;
+        let repository = DataRepository::new(&self.config.chains).await?;
 
         let prometheus_layer = PrometheusMetricLayerBuilder::new()
             .with_allow_patterns(&["/", "/health", "/metrics", VERSIONED_PATHS])
             .build();
         let metrics_handle = Handle::make_default_handle(Handle::default());
         let state = AppState {
-            nox_client,
+            nox_clients,
             config: self.config.clone(),
             crypto_svc,
             kms_client,
             metrics_handle,
             repository,
-            signer,
+            signers,
         };
 
         let address = self.config.bind_addr();
