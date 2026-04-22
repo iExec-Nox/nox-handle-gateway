@@ -493,10 +493,11 @@ sol! {
     #[derive(Deserialize)]
     struct OperandAccessAuthorization {
         uint256 chainId;
+        uint256 blockNumber;
         address caller;
+        string transactionHash;
         string[] operands;
         string rsaPublicKey;
-        string transactionHash;
     }
 
     /// EIP-712 compatible payload to authorize a Runner to publish results to the Handle Gateway.
@@ -881,6 +882,9 @@ pub async fn handle_status(
 ) -> Result<Json<HandleStatusReportResponse>, AppError> {
     let salt = extract_salt(query_params.salt)?;
     info!(count = request.handles.len(), "handle status request");
+    if request.handles.is_empty() {
+        return Err(AppError::BadRequest("empty handle batch".to_string()));
+    }
     let chain_id = chain_id_from_handle(&request.handles[0])?;
     if !state.verify_chain(chain_id) {
         return Err(AppError::UnknownChain(chain_id));
