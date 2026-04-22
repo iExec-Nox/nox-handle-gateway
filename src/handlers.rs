@@ -887,13 +887,16 @@ pub async fn handle_status(
         return Err(AppError::BadRequest(format!(
             "mixed-chain handle batch not supported: chain IDs {known_chain_ids:?}",
         )));
+    } else if known_chain_ids.is_empty() {
+        return Err(AppError::BadRequest(
+            "no supported chain IDs were found in the request".to_string(),
+        ));
     }
-    let chain_id = known_chain_ids.into_iter().next().unwrap_or_else(|| {
-        chain_ids
-            .first()
-            .copied()
-            .expect("non-empty after early return")
-    });
+    #[expect(
+        clippy::unwrap_used,
+        reason = "Panic case is impossible due to prior validation"
+    )]
+    let chain_id: u32 = known_chain_ids.into_iter().next().unwrap();
     let exists_map = state.repository.handles_exist(&request.handles).await?;
     let statuses: Vec<HandleResolution> = request
         .handles
@@ -907,12 +910,7 @@ pub async fn handle_status(
     let signing_chain_id = if state.signer(chain_id).is_ok() {
         chain_id
     } else {
-        *state
-            .config
-            .chains
-            .keys()
-            .min()
-            .expect("at least one chain configured")
+        DEFAULT_CHAIN_ID
     };
     let signer = state.signer(signing_chain_id)?;
     let response_domain = handle_gateway_response_domain(signing_chain_id, salt);

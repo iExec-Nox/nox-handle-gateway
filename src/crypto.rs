@@ -31,10 +31,10 @@ pub enum Error {
     EccError(String),
     #[error("ECIES decryption error: {0}")]
     EciesDecryptionError(String),
-    #[error("HKDF error: {0}")]
-    HkdfError(String),
     #[error("protocol key map must not be empty")]
     EmptyKeyMap,
+    #[error("HKDF error: {0}")]
+    HkdfError(String),
     #[error("no KMS public key for chain_id {0}")]
     UnknownChain(u32),
     #[error("RSA key generation error: {0}")]
