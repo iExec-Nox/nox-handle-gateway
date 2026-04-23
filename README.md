@@ -12,6 +12,8 @@
   - [Prerequisites](#prerequisites)
   - [Getting Started](#getting-started)
   - [Environment Variables](#environment-variables)
+    - [Global variables](#global-variables)
+    - [Per-chain variables (`CHAINS__{CHAIN_ID}__*`)](#per-chain-variables-chains__chain_id__)
   - [API Reference](#api-reference)
     - [Service Endpoints](#service-endpoints)
       - [`GET /`](#get-)
@@ -60,13 +62,14 @@ The Handle Gateway is the off-chain custody layer for encrypted values reference
 git clone https://github.com/iExec-Nox/nox-handle-gateway.git
 cd nox-handle-gateway
 
-# Set required environment variables
-export NOX_HANDLE_GATEWAY_S3__ACCESS_KEY="..."
-export NOX_HANDLE_GATEWAY_S3__SECRET_KEY="..."
-export NOX_HANDLE_GATEWAY_S3__REGION="eu-west-3"
-export NOX_HANDLE_GATEWAY_CHAIN__RPC_URL="https://..."
-export NOX_HANDLE_GATEWAY_CHAIN__NOX_COMPUTE_CONTRACT="0x..."
-export NOX_HANDLE_GATEWAY_SIGNER__WALLET_KEY="0x..."
+# Per-chain config — repeat this block for each chain ID you want to serve
+export NOX_HANDLE_GATEWAY_CHAINS__421614__RPC_URL="https://..."
+export NOX_HANDLE_GATEWAY_CHAINS__421614__NOX_COMPUTE_CONTRACT_ADDRESS="0x..."
+export NOX_HANDLE_GATEWAY_CHAINS__421614__WALLET_KEY="0x..."
+export NOX_HANDLE_GATEWAY_CHAINS__421614__S3__ACCESS_KEY="..."
+export NOX_HANDLE_GATEWAY_CHAINS__421614__S3__SECRET_KEY="..."
+export NOX_HANDLE_GATEWAY_CHAINS__421614__S3__REGION="eu-west-3"
+export NOX_HANDLE_GATEWAY_CHAINS__421614__S3__BUCKET="handles"
 
 # Build and run
 cargo run --release
@@ -78,32 +81,42 @@ cargo run --release
 
 Configuration is loaded from environment variables with the `NOX_HANDLE_GATEWAY_` prefix. Nested properties use double underscore (`__`) as separator.
 
+The gateway supports multiple chains simultaneously. Repeat the `CHAINS__{CHAIN_ID}__*` block for every chain the gateway should serve.
+
+### Global variables
+
 | Variable | Description | Required | Default |
 | -------- | ----------- | -------- | ------- |
 | `NOX_HANDLE_GATEWAY_SERVER__HOST` | Bind address | No | `127.0.0.1` |
 | `NOX_HANDLE_GATEWAY_SERVER__PORT` | Port | No | `3000` |
 | `NOX_HANDLE_GATEWAY_SERVER__CORS_ALLOWED_HEADERS` | Comma-separated list of allowed CORS request headers | No | `content-type,authorization` |
-| `NOX_HANDLE_GATEWAY_S3__ENDPOINT_URL` | Custom S3/MinIO endpoint. Absent = AWS standard regional endpoints | No | *(none)* |
-| `NOX_HANDLE_GATEWAY_S3__BUCKET` | S3 bucket name | No | `handles` |
-| `NOX_HANDLE_GATEWAY_S3__ACCESS_KEY` | S3 access key | **Yes** | — |
-| `NOX_HANDLE_GATEWAY_S3__SECRET_KEY` | S3 secret key | **Yes** | — |
-| `NOX_HANDLE_GATEWAY_S3__REGION` | S3 region (`eu-west-3` for AWS Paris; any string for MinIO) | **Yes** | — |
-| `NOX_HANDLE_GATEWAY_S3__TIMEOUT` | S3 operation timeout (seconds) | No | `30` |
-| `NOX_HANDLE_GATEWAY_S3__OBJECT_LOCK_ENABLED` | Set `false` for buckets without Object Lock (e.g. Sepolia) | No | `true` |
-| `NOX_HANDLE_GATEWAY_CHAIN__ID` | Chain ID for handle generation and EIP-712 domain | No | `421614` |
-| `NOX_HANDLE_GATEWAY_CHAIN__NOX_COMPUTE_CONTRACT` | NoxCompute contract address | No | `0x000...000` |
-| `NOX_HANDLE_GATEWAY_CHAIN__RPC_URL` | Ethereum RPC for on-chain ACL and KMS key reads | **Yes** | `http://localhost:8545` |
+| `NOX_HANDLE_GATEWAY_DEFAULT_CHAIN_ID` | Fallback chain ID used when `POST /v0/secrets` omits `chain_id` | No | `421614` |
 | `NOX_HANDLE_GATEWAY_KMS__URL` | KMS endpoint | No | `http://localhost:9000` |
 | `NOX_HANDLE_GATEWAY_KMS__SIGNER_ADDRESS` | Expected KMS signer address | No | `0x000...000` |
 | `NOX_HANDLE_GATEWAY_RUNNER_ADDRESS` | Ethereum address of the authorised runner | No | `0x000...000` |
-| `NOX_HANDLE_GATEWAY_SIGNER__WALLET_KEY` | Gateway EIP-712 signing key (hex, with or without `0x` prefix) | **Yes** | — |
+
+### Per-chain variables (`CHAINS__{CHAIN_ID}__*`)
+
+| Variable | Description | Required | Default |
+| -------- | ----------- | -------- | ------- |
+| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__NOX_COMPUTE_CONTRACT_ADDRESS` | NoxCompute contract address for this chain | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__RPC_URL` | Ethereum RPC endpoint for this chain | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__WALLET_KEY` | EIP-712 signing key for this chain (hex, with or without `0x` prefix) | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__S3__BUCKET` | S3 bucket name for this chain | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__S3__ACCESS_KEY` | S3 access key | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__S3__SECRET_KEY` | S3 secret key | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__S3__REGION` | S3 region (`eu-west-3` for AWS Paris; any string for MinIO) | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__S3__ENDPOINT_URL` | Custom S3/MinIO endpoint. Absent = AWS standard regional endpoints | No | *(none)* |
+| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__S3__TIMEOUT` | S3 operation timeout (seconds) | No | `30` |
+| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__S3__MAX_CONCURRENT_REQUESTS` | Max S3 requests in-flight concurrently | No | `100` |
+| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__S3__OBJECT_LOCK_ENABLED` | Set `false` for buckets without Object Lock (e.g. Sepolia) | No | `true` |
 
 For sensitive values, you can use the `_FILE` suffix to load from a file:
 
 ```bash
-NOX_HANDLE_GATEWAY_S3__ACCESS_KEY_FILE=/run/secrets/s3_access_key
-NOX_HANDLE_GATEWAY_S3__SECRET_KEY_FILE=/run/secrets/s3_secret_key
-NOX_HANDLE_GATEWAY_SIGNER__WALLET_KEY_FILE=/run/secrets/wallet_key
+NOX_HANDLE_GATEWAY_CHAINS__421614__S3__ACCESS_KEY_FILE=/run/secrets/s3_access_key
+NOX_HANDLE_GATEWAY_CHAINS__421614__S3__SECRET_KEY_FILE=/run/secrets/s3_secret_key
+NOX_HANDLE_GATEWAY_CHAINS__421614__WALLET_KEY_FILE=/run/secrets/wallet_key
 ```
 
 Logging level is controlled via the `RUST_LOG` environment variable:
@@ -175,6 +188,12 @@ Authenticated endpoints require `Authorization: EIP712 <Base64(JSON)>` and enfor
 
 Encrypts a value and stores it under a freshly generated handle. Returns a packed `HandleProof` signed under the NoxCompute domain for on-chain verification, wrapped in a Handle Gateway outer signature.
 
+**Query Parameters:**
+
+| Parameter | Description | Required |
+| --------- | ----------- | -------- |
+| `chain_id` | Chain ID to use for this handle. Must correspond to a configured chain. When absent, the gateway falls back to `DEFAULT_CHAIN_ID` and logs a warning. | No |
+
 **Request Body:**
 
 ```json
@@ -215,7 +234,7 @@ Encrypts a value and stores it under a freshly generated handle. Returns a packe
 
 | Status | Description |
 | ------ | ----------- |
-| `400 Bad Request` | `value` does not match `solidityType`, or `salt` is malformed |
+| `400 Bad Request` | `chain_id` is not a configured chain; `value` does not match `solidityType`; `salt` is malformed; or incorrect input data are given through the request |
 | `409 Conflict` | Handle already exists in S3 |
 | `500 Internal Server Error` | Encryption, signing, or S3 error |
 
