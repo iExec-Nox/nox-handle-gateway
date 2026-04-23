@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use alloy_primitives::hex;
 use alloy_signer_local::PrivateKeySigner;
+use anyhow::anyhow;
 use axum::{
     Json, Router,
     extract::State,
@@ -149,23 +150,35 @@ impl Application {
 
             if signer.address() != onchain_gateway {
                 anyhow::bail!(
-                    "chain {chain_id}: wallet address {} does not match on-chain gateway {}",
+                    "chain {chain_id}: wallet address {} does not match on-chain gateway {onchain_gateway}",
                     signer.address(),
-                    onchain_gateway
                 );
             }
 
+            if nox_clients.insert(chain_id, nox_client.clone()).is_some() {
+                return Err(anyhow!(
+                    "Failed to register Nox client {nox_client:#?} for chain {chain_id}"
+                ));
+            };
+            if protocol_keys.insert(chain_id, kms_public_key).is_some() {
+                return Err(anyhow!(
+                    "Failed to register protocol key {} for chain {chain_id}",
+                    hex::encode_prefixed(kms_public_key.to_sec1_bytes())
+                ));
+            };
+            if signers.insert(chain_id, signer.clone()).is_some() {
+                return Err(anyhow!(
+                    "Failed to register private signer {} for chain {chain_id}",
+                    signer.address()
+                ));
+            };
             info!(
                 nox_compute = %chain_cfg.nox_compute_contract_address,
                 rpc = %chain_cfg.rpc_url,
-                kms_pubkey = %hex::encode(&kms_public_key.to_sec1_bytes()[..4]),
+                kms_pubkey = %hex::encode_prefixed(kms_public_key.to_sec1_bytes()),
                 gateway_addr = %onchain_gateway,
                 "Chain configuration complete for chain {chain_id}"
             );
-
-            nox_clients.insert(chain_id, nox_client);
-            protocol_keys.insert(chain_id, kms_public_key);
-            signers.insert(chain_id, signer);
         }
 
         let crypto_svc = CryptoService::new(protocol_keys)?;

@@ -44,7 +44,7 @@ pub enum RpcError {
 /// Wraps an `INoxCompute` contract instance to verify ACL access and fetch the
 /// KMS public key. Also provides ERC-1271 signature verification for Smart
 /// Account callers via a separate `IERC1271` contract instance created on demand.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NoxClient {
     contract: INoxCompute::INoxComputeInstance<RootProvider>,
 }
