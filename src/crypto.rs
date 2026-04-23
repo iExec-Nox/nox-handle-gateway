@@ -77,8 +77,8 @@ impl CryptoService {
                 .to_public_key_der()
                 .map_err(|e| Error::RsaKeyGenError(e.to_string()))?,
         );
-        for (chain_id, pk) in &protocol_keys {
-            let kms_pubkey = &hex::encode(pk.to_sec1_bytes());
+        for (chain_id, key) in &protocol_keys {
+            let kms_pubkey = &hex::encode(key.to_sec1_bytes());
             info!("KMS public key {kms_pubkey} loaded for chain {chain_id}");
         }
         Ok(Self {

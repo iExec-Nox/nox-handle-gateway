@@ -13,7 +13,7 @@
   - [Getting Started](#getting-started)
   - [Environment Variables](#environment-variables)
     - [Global variables](#global-variables)
-    - [Per-chain variables (`CHAINS__{CHAIN_ID}__*`)](#per-chain-variables-chains__chain_id__)
+    - [Per-chain variables (`CHAINS__<CHAIN_ID>__*`)](#per-chain-variables-chains__chain_id__)
   - [API Reference](#api-reference)
     - [Service Endpoints](#service-endpoints)
       - [`GET /`](#get-)
@@ -75,13 +75,16 @@ export NOX_HANDLE_GATEWAY_CHAINS__421614__S3__BUCKET="handles"
 cargo run --release
 ```
 
+> [!IMPORTANT]
+> `<CHAIN_ID>` represents the chain ID (421614 for Arbitrum Sepolia) of the target blockchain network where the `NoxCompute` smart contract has been deployed. The Handle Gateway will be able to encrypt and store handles and serve their crypto material for this `NoxCompute` smart contract deployment.
+
 ---
 
 ## Environment Variables
 
 Configuration is loaded from environment variables with the `NOX_HANDLE_GATEWAY_` prefix. Nested properties use double underscore (`__`) as separator.
 
-The gateway supports multiple chains simultaneously. Repeat the `CHAINS__{CHAIN_ID}__*` block for every chain the gateway should serve.
+The gateway supports multiple chains simultaneously. Repeat the `CHAINS__<CHAIN_ID>__*` block for every chain the gateway should serve.
 
 ### Global variables
 
@@ -95,21 +98,21 @@ The gateway supports multiple chains simultaneously. Repeat the `CHAINS__{CHAIN_
 | `NOX_HANDLE_GATEWAY_KMS__SIGNER_ADDRESS` | Expected KMS signer address | No | `0x000...000` |
 | `NOX_HANDLE_GATEWAY_RUNNER_ADDRESS` | Ethereum address of the authorised runner | No | `0x000...000` |
 
-### Per-chain variables (`CHAINS__{CHAIN_ID}__*`)
+### Per-chain variables (`CHAINS__<CHAIN_ID>__*`)
 
 | Variable | Description | Required | Default |
 | -------- | ----------- | -------- | ------- |
-| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__NOX_COMPUTE_CONTRACT_ADDRESS` | NoxCompute contract address for this chain | **Yes** | — |
-| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__RPC_URL` | Ethereum RPC endpoint for this chain | **Yes** | — |
-| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__WALLET_KEY` | EIP-712 signing key for this chain (hex, with or without `0x` prefix) | **Yes** | — |
-| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__S3__BUCKET` | S3 bucket name for this chain | **Yes** | — |
-| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__S3__ACCESS_KEY` | S3 access key | **Yes** | — |
-| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__S3__SECRET_KEY` | S3 secret key | **Yes** | — |
-| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__S3__REGION` | S3 region (`eu-west-3` for AWS Paris; any string for MinIO) | **Yes** | — |
-| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__S3__ENDPOINT_URL` | Custom S3/MinIO endpoint. Absent = AWS standard regional endpoints | No | *(none)* |
-| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__S3__TIMEOUT` | S3 operation timeout (seconds) | No | `30` |
-| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__S3__MAX_CONCURRENT_REQUESTS` | Max S3 requests in-flight concurrently | No | `100` |
-| `NOX_HANDLE_GATEWAY_CHAINS__{CHAIN_ID}__S3__OBJECT_LOCK_ENABLED` | Set `false` for buckets without Object Lock (e.g. Sepolia) | No | `true` |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__NOX_COMPUTE_CONTRACT_ADDRESS` | NoxCompute contract address for this chain | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__RPC_URL` | Ethereum RPC endpoint for this chain | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__WALLET_KEY` | EIP-712 signing key for this chain (hex, with or without `0x` prefix) | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__BUCKET` | S3 bucket name for this chain | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__ACCESS_KEY` | S3 access key | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__SECRET_KEY` | S3 secret key | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__REGION` | S3 region (`eu-west-3` for AWS Paris; any string for MinIO) | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__ENDPOINT_URL` | Custom S3/MinIO endpoint. Absent = AWS standard regional endpoints | No | *(none)* |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__TIMEOUT` | S3 operation timeout (seconds) | No | `30` |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__MAX_CONCURRENT_REQUESTS` | Max S3 requests in-flight concurrently | No | `100` |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__OBJECT_LOCK_ENABLED` | Set `false` for buckets without Object Lock (e.g. Sepolia) | No | `true` |
 
 For sensitive values, you can use the `_FILE` suffix to load from a file:
 
