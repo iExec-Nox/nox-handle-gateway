@@ -144,7 +144,8 @@ impl Application {
 
             let kms_public_key = nox_client.kms_public_key().await?;
 
-            let signer = CryptoService::load_signer(&chain_cfg.wallet_key)?;
+            let signer = CryptoService::load_signer(&chain_cfg.wallet_key)
+                .map_err(|e| anyhow!("chain {chain_id}: {e}"))?;
 
             let onchain_gateway = nox_client.gateway_address().await?;
 

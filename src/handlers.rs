@@ -184,20 +184,19 @@ pub async fn create_handle(
         createdAt: created_at,
     };
 
-    let signer = &state.signers[&chain_id];
-    let handle_proof_signature = signer
+    let handle_proof_signature = &state.signers[&chain_id]
         .sign_typed_data_sync(&proof, &nox_compute_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .as_bytes();
 
-    let serialized_handle_proof = proof.to_serialized_bytes(handle_proof_signature);
+    let serialized_handle_proof = proof.to_serialized_bytes(*handle_proof_signature);
 
     let handle_with_proof = HandleWithProof {
         handle: serialized_handle,
         proof: serialized_handle_proof,
     };
     let response_domain = handle_gateway_response_domain(chain_id, salt);
-    let handle_response_signature = signer
+    let handle_response_signature = state.signers[&chain_id]
         .sign_typed_data_sync(&handle_with_proof, &response_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();
@@ -352,19 +351,18 @@ pub async fn get_handle_crypto_material(
 
     let entry = state.repository.fetch_handle(&handle).await?;
 
-    let signer = &state.signers[&chain_id];
     info!(handle, "decryption delegation request");
     let crypto_material = get_crypto_material_for_entry(
         state.kms_client.clone(),
         &entry,
         &payload.encryptionPubKey,
-        signer,
+        &state.signers[&chain_id],
         chain_id,
     )
     .await?;
 
     let response_domain = handle_gateway_response_domain(chain_id, salt);
-    let signature = signer
+    let signature = state.signers[&chain_id]
         .sign_typed_data_sync(&crypto_material, &response_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();
@@ -412,15 +410,13 @@ pub async fn public_decrypt(
 
     let entry = state.repository.fetch_handle(&handle).await?;
 
-    let signer = &state.signers[&chain_id];
-
     // KMS delegate → encrypted shared secret
     let encrypted_shared_secret = state
         .kms_client
         .get_encrypted_shared_secret(
             &entry.public_key,
             &state.crypto_svc.rsa_public_key,
-            signer,
+            &state.signers[&chain_id],
             chain_id,
         )
         .await?;
@@ -443,7 +439,7 @@ pub async fn public_decrypt(
         handle: handle_b256,
         decryptedResult: Bytes::from(decrypted_result.clone()),
     };
-    let signature = signer
+    let signature = state.signers[&chain_id]
         .sign_typed_data_sync(&proof_struct, &nox_compute_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .as_bytes();
@@ -457,7 +453,7 @@ pub async fn public_decrypt(
         decryptionProof: hex::encode_prefixed(serialized),
     };
     let response_domain = handle_gateway_response_domain(chain_id, salt);
-    let public_decrypt_response_signature = signer
+    let public_decrypt_response_signature = state.signers[&chain_id]
         .sign_typed_data_sync(&result_payload, &response_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();
@@ -700,14 +696,13 @@ pub async fn get_operand_handles(
         ));
     }
 
-    let signer = &state.signers[&chain_id];
     let operands_crypto_material: Vec<HandleCryptoMaterial> =
         join_all(operand_handles.iter().map(|entry| {
             get_crypto_material_for_entry(
                 state.kms_client.clone(),
                 entry,
                 &compute_request.rsaPublicKey,
-                signer,
+                &state.signers[&chain_id],
                 chain_id,
             )
         }))
@@ -738,7 +733,7 @@ pub async fn get_operand_handles(
     };
 
     let response_domain = handle_gateway_response_domain(chain_id, salt);
-    let signature = signer
+    let signature = state.signers[&chain_id]
         .sign_typed_data_sync(&payload, &response_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();
@@ -837,9 +832,8 @@ pub async fn publish_results(
         ),
     };
 
-    let signer = &state.signers[&chain_id];
     let response_domain = handle_gateway_response_domain(chain_id, salt);
-    let signature = signer
+    let signature = state.signers[&chain_id]
         .sign_typed_data_sync(&payload, &response_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();
@@ -910,9 +904,8 @@ pub async fn handle_status(
         })
         .collect();
     let payload = HandleStatusReport { statuses };
-    let signer = &state.signers[&chain_id];
     let response_domain = handle_gateway_response_domain(chain_id, salt);
-    let signature = signer
+    let signature = state.signers[&chain_id]
         .sign_typed_data_sync(&payload, &response_domain)
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();

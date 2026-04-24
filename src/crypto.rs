@@ -167,12 +167,12 @@ impl CryptoService {
     pub fn load_signer(wallet_key: &str) -> Result<PrivateKeySigner, Error> {
         if wallet_key.is_empty() {
             return Err(Error::SignerError(
-                "NOX_HANDLE_GATEWAY_SIGNER__WALLET_KEY is not set".to_string(),
+                "wallet_key must not be empty".to_string(),
             ));
         }
 
         let bytes = hex::decode(wallet_key)
-            .map_err(|e| Error::SignerError(format!("Invalid hex in SIGNER__WALLET_KEY: {e}")))?;
+            .map_err(|e| Error::SignerError(format!("wallet_key is not valid hex: {e}")))?;
 
         if bytes.len() != 32 {
             return Err(Error::SignerError(format!(
