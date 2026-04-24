@@ -11,6 +11,7 @@ sol! {
         function isViewer(bytes32 handle, address viewer) external view returns (bool);
         function isPubliclyDecryptable(bytes32 handle) external view returns (bool);
         function kmsPublicKey() external view returns (bytes memory);
+        function gateway() external view returns (address);
     }
 
     /// ERC-1271 standard interface for Smart Account signature verification.
@@ -43,7 +44,7 @@ pub enum RpcError {
 /// Wraps an `INoxCompute` contract instance to verify ACL access and fetch the
 /// KMS public key. Also provides ERC-1271 signature verification for Smart
 /// Account callers via a separate `IERC1271` contract instance created on demand.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NoxClient {
     contract: INoxCompute::INoxComputeInstance<RootProvider>,
 }
@@ -76,6 +77,18 @@ impl NoxClient {
             .await
             .map_err(RpcError::CallFailure)?;
         PublicKey::from_sec1_bytes(&result).map_err(|e| RpcError::InvalidKey(e.to_string()))
+    }
+
+    /// Fetch the on-chain gateway address from the NoxCompute contract.
+    ///
+    /// Calls `gateway()` on-chain. Used at startup to cross-check the configured
+    /// `wallet_key` derives the same address as registered on-chain.
+    pub async fn gateway_address(&self) -> Result<Address, RpcError> {
+        self.contract
+            .gateway()
+            .call()
+            .await
+            .map_err(RpcError::CallFailure)
     }
 
     /// Verify that `viewer` has read access to `handle` on-chain.

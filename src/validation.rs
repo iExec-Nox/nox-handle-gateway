@@ -97,3 +97,12 @@ pub fn parse_handle(handle: &str) -> Result<B256, AppError> {
     }
     Ok(B256::from_slice(&raw))
 }
+
+/// Extracts the chain ID encoded in bytes [1..5] (big-endian u32) of a handle.
+///
+/// Returns [`AppError::BadRequest`] if `handle` is not a valid 32-byte hex string.
+/// Does not validate whether the chain ID is configured — that is the caller's responsibility.
+pub fn chain_id_from_handle(handle: &str) -> Result<u32, AppError> {
+    let bytes = parse_handle(handle)?;
+    Ok(u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]))
+}

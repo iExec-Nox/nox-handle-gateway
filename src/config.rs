@@ -13,11 +13,12 @@ use tracing::debug;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
-    pub chain: ChainConfig,
+    pub chains: HashMap<u32, PerChainConfig>,
     pub kms: KmsConfig,
-    pub s3: HashMap<u32, S3Config>,
-    pub signer: SignerConfig,
     pub runner_address: Address,
+    /// Fallback chain ID when the SDK omits the `chain_id` query parameter.
+    // TODO: Remove when SDK supports chain ID query param.
+    pub default_chain_id: u32,
 }
 
 /// HTTP server bind configuration.
@@ -37,6 +38,19 @@ pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     pub cors_allowed_headers: Vec<String>,
+}
+
+/// Per-chain configuration combining RPC, signing key, and S3/MinIO storage settings.
+///
+/// One entry per configured chain ID under `NOX_HANDLE_GATEWAY_CHAINS__{chain_id}__*`.
+/// Duplicating values across chains (e.g. the same `wallet_key`) is intentional —
+/// it supports both single-key and per-chain-key deployments without special-casing.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PerChainConfig {
+    pub nox_compute_contract_address: Address,
+    pub rpc_url: String,
+    pub s3: S3Config,
+    pub wallet_key: String,
 }
 
 /// S3/MinIO connection configuration.
@@ -84,14 +98,6 @@ fn default_s3_max_concurrent_requests() -> usize {
     100
 }
 
-/// Ethereum chain and NoxCompute contract configuration.
-#[derive(Debug, Clone, Deserialize)]
-pub struct ChainConfig {
-    pub id: u32,
-    pub nox_compute_contract: Address,
-    pub rpc_url: String,
-}
-
 /// KMS service configuration.
 #[derive(Clone, Debug, Deserialize)]
 pub struct KmsConfig {
@@ -99,22 +105,11 @@ pub struct KmsConfig {
     pub signer_address: Address,
 }
 
-/// EIP-712 signer configuration.
-///
-/// The private key is injected via the `NOX_HANDLE_GATEWAY_SIGNER__WALLET_KEY`
-/// environment variable as a hex-encoded 32-byte scalar (with or without `0x`
-/// prefix). There is no default — the process exits at startup if the key is
-/// absent or malformed.
-#[derive(Debug, Clone, Deserialize)]
-pub struct SignerConfig {
-    pub wallet_key: String,
-}
-
 impl Config {
     /// Loads configuration from environment variables.
     ///
     /// Variables are prefixed `NOX_HANDLE_GATEWAY_` with `__` as the nested
-    /// separator (e.g. `NOX_HANDLE_GATEWAY_S3__421614__BUCKET`). Secret-file variants
+    /// separator (e.g. `NOX_HANDLE_GATEWAY_CHAINS__421614__BUCKET`). Secret-file variants
     /// are also supported via `config_secret`.
     pub fn load() -> Result<Self, ConfigError> {
         let config = ConfigBuilder::builder()
@@ -124,12 +119,6 @@ impl Config {
                 "server.cors_allowed_headers",
                 vec!["content-type", "authorization"],
             )?
-            .set_default("chain.id", 421614)?
-            .set_default(
-                "chain.nox_compute_contract",
-                "0x0000000000000000000000000000000000000000",
-            )?
-            .set_default("chain.rpc_url", "http://localhost:8545")?
             .set_default("kms.url", "http://localhost:9000")?
             .set_default(
                 "kms.signer_address",
@@ -139,7 +128,7 @@ impl Config {
                 "runner_address",
                 "0x0000000000000000000000000000000000000000",
             )?
-            .set_default("signer.wallet_key", "")?
+            .set_default("default_chain_id", 421614)?
             .add_source(
                 Environment::with_prefix("NOX_HANDLE_GATEWAY")
                     .prefix_separator("_")

@@ -15,17 +15,9 @@ use std::collections::HashMap;
 
 use futures_util::future::try_join_all;
 
-use crate::config::S3Config;
+use crate::config::PerChainConfig;
 use crate::handlers::HandleEntryWithTag;
-use crate::validation::parse_handle;
-
-/// Extracts the chain ID from a handle hex string.
-fn chain_id_from_handle(handle: &str) -> Result<u32, S3Error> {
-    let bytes = parse_handle(handle).map_err(|e| S3Error::InvalidHandle {
-        reason: e.to_string(),
-    })?;
-    Ok(u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]))
-}
+use crate::validation::chain_id_from_handle;
 
 /// Chain-routing repository that dispatches all handle operations to the
 /// correct [`BucketRepository`] based on the chain ID encoded in each handle.
@@ -38,9 +30,9 @@ impl DataRepository {
     /// Builds one [`BucketRepository`] per configured chain ID, validating all
     /// buckets concurrently at startup. Fails if any bucket is unreachable or
     /// has a mismatched Object Lock state.
-    pub async fn new(configs: &HashMap<u32, S3Config>) -> anyhow::Result<Self> {
+    pub async fn new(configs: &HashMap<u32, PerChainConfig>) -> anyhow::Result<Self> {
         let repos = try_join_all(configs.iter().map(|(&chain_id, cfg)| async move {
-            BucketRepository::new(cfg)
+            BucketRepository::new(&cfg.s3)
                 .await
                 .map(|repo| (chain_id, repo))
         }))
@@ -90,7 +82,9 @@ impl DataRepository {
     // the gateway does not know" and includes the set of configured chain IDs
     // so operators can spot misconfiguration quickly.
     pub async fn fetch_handle(&self, handle: &str) -> Result<HandleEntry, S3Error> {
-        let chain_id = chain_id_from_handle(handle)?;
+        let chain_id = chain_id_from_handle(handle).map_err(|e| S3Error::InvalidHandle {
+            reason: e.to_string(),
+        })?;
         match self.repo_for_chain(chain_id) {
             Ok(repo) => repo.fetch_handle(handle).await,
             Err(S3Error::UnknownChain { .. }) => Err(S3Error::NotFound {
@@ -111,7 +105,9 @@ impl DataRepository {
         ids: &[String],
     ) -> Result<Vec<HandleEntry>, S3Error> {
         for id in ids {
-            let handle_chain = chain_id_from_handle(id)?;
+            let handle_chain = chain_id_from_handle(id).map_err(|e| S3Error::InvalidHandle {
+                reason: e.to_string(),
+            })?;
             if handle_chain != chain_id {
                 return Err(S3Error::InvalidHandle {
                     reason: format!(
@@ -123,34 +119,15 @@ impl DataRepository {
         self.repo_for_chain(chain_id)?.read_handles(ids).await
     }
 
-    /// Checks existence of handles across chains, one bucket call per chain.
+    /// Checks existence of handles within a single chain's bucket.
     ///
-    /// Handles are grouped by their embedded chain ID so each
-    /// [`BucketRepository`] is queried once with its subset. Handles whose
-    /// chain ID is not configured are reported as `false` as the caller asked
-    /// about existence and an unconfigured chain is a definitive "no".
-    pub async fn handles_exist(&self, ids: &[String]) -> Result<HashMap<String, bool>, S3Error> {
-        let mut groups: HashMap<u32, Vec<String>> = HashMap::new();
-        for id in ids {
-            let chain_id = chain_id_from_handle(id)?;
-            groups.entry(chain_id).or_default().push(id.clone());
-        }
-
-        let mut result = HashMap::with_capacity(ids.len());
-        for (chain_id, group_ids) in groups {
-            let repo = match self.repo_for_chain(chain_id) {
-                Ok(repo) => repo,
-                Err(S3Error::UnknownChain { .. }) => {
-                    for id in group_ids {
-                        result.insert(id, false);
-                    }
-                    continue;
-                }
-                Err(e) => return Err(e),
-            };
-            let group_result = repo.handles_exist(&group_ids).await?;
-            result.extend(group_result);
-        }
-        Ok(result)
+    /// The caller is responsible for ensuring all `ids` belong to `chain_id`
+    /// and that `chain_id` is a configured chain.
+    pub async fn handles_exist(
+        &self,
+        chain_id: u32,
+        ids: &[String],
+    ) -> Result<HashMap<String, bool>, S3Error> {
+        self.repo_for_chain(chain_id)?.handles_exist(ids).await
     }
 }

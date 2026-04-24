@@ -33,6 +33,8 @@ pub enum AppError {
     StorageError(#[from] repository::S3Error),
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
+    #[error("chain_id {0} not configured")]
+    UnknownChain(u32),
 }
 
 impl AppError {
@@ -48,6 +50,7 @@ impl AppError {
             AppError::SigningError(_) => "signing",
             AppError::StorageError(_) => "storage",
             AppError::Unauthorized(_) => "unauthorized",
+            AppError::UnknownChain(_) => "unknown_chain",
         }
     }
 
@@ -78,6 +81,7 @@ impl AppError {
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            AppError::UnknownChain(_) => StatusCode::BAD_REQUEST,
         }
     }
 }

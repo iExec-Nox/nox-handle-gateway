@@ -12,6 +12,8 @@
   - [Prerequisites](#prerequisites)
   - [Getting Started](#getting-started)
   - [Environment Variables](#environment-variables)
+    - [Global variables](#global-variables)
+    - [Per-chain variables (`CHAINS__<CHAIN_ID>__*`)](#per-chain-variables-chains__chain_id__)
   - [API Reference](#api-reference)
     - [Service Endpoints](#service-endpoints)
       - [`GET /`](#get-)
@@ -33,15 +35,15 @@
 
 The Handle Gateway is the off-chain custody layer for encrypted values referenced by on-chain handles. It is the only service that writes ciphertexts to storage and the only service that calls [nox-kms](https://github.com/iExec-Nox/nox-kms) to delegate re-encrypted material. All responses carry an EIP-712 signature so callers can verify origin cryptographically.
 
-**Storing an encrypted value (`POST /v0/secrets`):** A caller submits a plaintext value to be stored confidentially. The gateway encrypts it under the KMS public key using ECIES (secp256k1 ECDH + HKDF-SHA256 + AES-256-GCM), generates a 32-byte handle as the on-chain reference, and returns a signed `HandleProof` that smart contracts can verify to confirm the handle was legitimately created by this gateway.
+**Storing an encrypted value (`POST /v0/secrets`):** A caller submits a plaintext value to be stored confidentially. The Handle Gateway encrypts it under the KMS public key using ECIES (secp256k1 ECDH + HKDF-SHA256 + AES-256-GCM), generates a 32-byte handle as the on-chain reference, and returns a signed `HandleProof` that smart contracts can verify to confirm the handle was legitimately created by this Handle Gateway.
 
-**Decrypting a value (`GET /v0/secrets/{handle}`):** An authorised party (owner or ACL grantee) retrieves the encrypted material for a handle. The gateway verifies the caller's EIP-712 token, checks on-chain ACL, and delegates to [nox-kms](https://github.com/iExec-Nox/nox-kms) which RSA-OAEP-encrypts the shared secret for the caller's RSA key. The caller decrypts locally; the KMS private key never leaves the KMS.
+**Decrypting a value (`GET /v0/secrets/{handle}`):** An authorised party (owner or ACL grantee) retrieves the encrypted material for a handle. The Handle Gateway verifies the caller's EIP-712 token, checks on-chain ACL, and delegates to [nox-kms](https://github.com/iExec-Nox/nox-kms) which RSA-OAEP-encrypts the shared secret for the caller's RSA key. The caller decrypts locally; the KMS private key never leaves the KMS.
 
 **Confidential computation (`GET /v0/compute/operands`, `POST /v0/compute/results`):** The off-chain [nox-runner](https://github.com/iExec-Nox/nox-runner) uses these endpoints to fetch encrypted inputs before a computation and publish encrypted outputs after. This enables computation over confidential handles without the runner ever seeing plaintext values.
 
 **Polling handle resolution (`POST /v0/public/handles/status`):** Any caller can check whether a batch of handles is already stored.
 
-**Public decryption (`GET /v0/public/{handle}`):** When the handle owner has granted public decryptability on-chain, anyone can retrieve the plaintext. The gateway delegates to [nox-kms](https://github.com/iExec-Nox/nox-kms) using its own RSA key, decrypts locally, and returns a `DecryptionProof` signed by the gateway that proves the decryption was performed correctly.
+**Public decryption (`GET /v0/public/{handle}`):** When the handle owner has granted public decryptability on-chain, anyone can retrieve the plaintext. The Handle Gateway delegates to [nox-kms](https://github.com/iExec-Nox/nox-kms) using its own RSA key, decrypts locally, and returns a `DecryptionProof` signed by the Handle Gateway that proves the decryption was performed correctly.
 
 ---
 
@@ -60,17 +62,21 @@ The Handle Gateway is the off-chain custody layer for encrypted values reference
 git clone https://github.com/iExec-Nox/nox-handle-gateway.git
 cd nox-handle-gateway
 
-# Set required environment variables
-export NOX_HANDLE_GATEWAY_S3__ACCESS_KEY="..."
-export NOX_HANDLE_GATEWAY_S3__SECRET_KEY="..."
-export NOX_HANDLE_GATEWAY_S3__REGION="eu-west-3"
-export NOX_HANDLE_GATEWAY_CHAIN__RPC_URL="https://..."
-export NOX_HANDLE_GATEWAY_CHAIN__NOX_COMPUTE_CONTRACT="0x..."
-export NOX_HANDLE_GATEWAY_SIGNER__WALLET_KEY="0x..."
+# Per-chain config — repeat this block for each chain ID you want to serve
+export NOX_HANDLE_GATEWAY_CHAINS__421614__RPC_URL="https://..."
+export NOX_HANDLE_GATEWAY_CHAINS__421614__NOX_COMPUTE_CONTRACT_ADDRESS="0x..."
+export NOX_HANDLE_GATEWAY_CHAINS__421614__WALLET_KEY="0x..."
+export NOX_HANDLE_GATEWAY_CHAINS__421614__S3__ACCESS_KEY="..."
+export NOX_HANDLE_GATEWAY_CHAINS__421614__S3__SECRET_KEY="..."
+export NOX_HANDLE_GATEWAY_CHAINS__421614__S3__REGION="eu-west-3"
+export NOX_HANDLE_GATEWAY_CHAINS__421614__S3__BUCKET="handles"
 
 # Build and run
 cargo run --release
 ```
+
+> [!IMPORTANT]
+> `<CHAIN_ID>` represents the chain ID (421614 for Arbitrum Sepolia) of the target blockchain network where the `NoxCompute` smart contract has been deployed. The Handle Gateway will be able to encrypt and store handles and serve their crypto material for this `NoxCompute` smart contract deployment.
 
 ---
 
@@ -78,32 +84,42 @@ cargo run --release
 
 Configuration is loaded from environment variables with the `NOX_HANDLE_GATEWAY_` prefix. Nested properties use double underscore (`__`) as separator.
 
+The Handle Gateway supports multiple chains simultaneously. Repeat the `CHAINS__<CHAIN_ID>__*` block for every chain the Handle Gateway should serve.
+
+### Global variables
+
 | Variable | Description | Required | Default |
 | -------- | ----------- | -------- | ------- |
 | `NOX_HANDLE_GATEWAY_SERVER__HOST` | Bind address | No | `127.0.0.1` |
 | `NOX_HANDLE_GATEWAY_SERVER__PORT` | Port | No | `3000` |
 | `NOX_HANDLE_GATEWAY_SERVER__CORS_ALLOWED_HEADERS` | Comma-separated list of allowed CORS request headers | No | `content-type,authorization` |
-| `NOX_HANDLE_GATEWAY_S3__ENDPOINT_URL` | Custom S3/MinIO endpoint. Absent = AWS standard regional endpoints | No | *(none)* |
-| `NOX_HANDLE_GATEWAY_S3__BUCKET` | S3 bucket name | No | `handles` |
-| `NOX_HANDLE_GATEWAY_S3__ACCESS_KEY` | S3 access key | **Yes** | — |
-| `NOX_HANDLE_GATEWAY_S3__SECRET_KEY` | S3 secret key | **Yes** | — |
-| `NOX_HANDLE_GATEWAY_S3__REGION` | S3 region (`eu-west-3` for AWS Paris; any string for MinIO) | **Yes** | — |
-| `NOX_HANDLE_GATEWAY_S3__TIMEOUT` | S3 operation timeout (seconds) | No | `30` |
-| `NOX_HANDLE_GATEWAY_S3__OBJECT_LOCK_ENABLED` | Set `false` for buckets without Object Lock (e.g. Sepolia) | No | `true` |
-| `NOX_HANDLE_GATEWAY_CHAIN__ID` | Chain ID for handle generation and EIP-712 domain | No | `421614` |
-| `NOX_HANDLE_GATEWAY_CHAIN__NOX_COMPUTE_CONTRACT` | NoxCompute contract address | No | `0x000...000` |
-| `NOX_HANDLE_GATEWAY_CHAIN__RPC_URL` | Ethereum RPC for on-chain ACL and KMS key reads | **Yes** | `http://localhost:8545` |
+| `NOX_HANDLE_GATEWAY_DEFAULT_CHAIN_ID` | Fallback chain ID used when `POST /v0/secrets` omits `chain_id` | No | `421614` |
 | `NOX_HANDLE_GATEWAY_KMS__URL` | KMS endpoint | No | `http://localhost:9000` |
 | `NOX_HANDLE_GATEWAY_KMS__SIGNER_ADDRESS` | Expected KMS signer address | No | `0x000...000` |
 | `NOX_HANDLE_GATEWAY_RUNNER_ADDRESS` | Ethereum address of the authorised runner | No | `0x000...000` |
-| `NOX_HANDLE_GATEWAY_SIGNER__WALLET_KEY` | Gateway EIP-712 signing key (hex, with or without `0x` prefix) | **Yes** | — |
+
+### Per-chain variables (`CHAINS__<CHAIN_ID>__*`)
+
+| Variable | Description | Required | Default |
+| -------- | ----------- | -------- | ------- |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__NOX_COMPUTE_CONTRACT_ADDRESS` | NoxCompute contract address for this chain | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__RPC_URL` | Ethereum RPC endpoint for this chain | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__WALLET_KEY` | EIP-712 signing key for this chain (hex, with or without `0x` prefix) | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__BUCKET` | S3 bucket name for this chain | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__ACCESS_KEY` | S3 access key | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__SECRET_KEY` | S3 secret key | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__REGION` | S3 region (`eu-west-3` for AWS Paris; any string for MinIO) | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__ENDPOINT_URL` | Custom S3/MinIO endpoint. Absent = AWS standard regional endpoints | No | *(none)* |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__TIMEOUT` | S3 operation timeout (seconds) | No | `30` |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__MAX_CONCURRENT_REQUESTS` | Max S3 requests in-flight concurrently | No | `100` |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__OBJECT_LOCK_ENABLED` | Set `false` for buckets without Object Lock (e.g. Sepolia) | No | `true` |
 
 For sensitive values, you can use the `_FILE` suffix to load from a file:
 
 ```bash
-NOX_HANDLE_GATEWAY_S3__ACCESS_KEY_FILE=/run/secrets/s3_access_key
-NOX_HANDLE_GATEWAY_S3__SECRET_KEY_FILE=/run/secrets/s3_secret_key
-NOX_HANDLE_GATEWAY_SIGNER__WALLET_KEY_FILE=/run/secrets/wallet_key
+NOX_HANDLE_GATEWAY_CHAINS__421614__S3__ACCESS_KEY_FILE=/run/secrets/s3_access_key
+NOX_HANDLE_GATEWAY_CHAINS__421614__S3__SECRET_KEY_FILE=/run/secrets/s3_secret_key
+NOX_HANDLE_GATEWAY_CHAINS__421614__WALLET_KEY_FILE=/run/secrets/wallet_key
 ```
 
 Logging level is controlled via the `RUST_LOG` environment variable:
@@ -175,6 +191,13 @@ Authenticated endpoints require `Authorization: EIP712 <Base64(JSON)>` and enfor
 
 Encrypts a value and stores it under a freshly generated handle. Returns a packed `HandleProof` signed under the NoxCompute domain for on-chain verification, wrapped in a Handle Gateway outer signature.
 
+**Query Parameters:**
+
+| Parameter | Description | Required |
+| --------- | ----------- | -------- |
+| `chain_id` | Chain ID to use for this handle. Must correspond to a configured chain. When absent, the Handle Gateway falls back to `DEFAULT_CHAIN_ID` and logs a warning. | No |
+| `salt` | 32-byte hex value (`0x` + 64 hex chars) bound into the Handle Gateway EIP-712 response-signing domain. Defaults to `bytes32(0)` when omitted. | No |
+
 **Request Body:**
 
 ```json
@@ -215,7 +238,7 @@ Encrypts a value and stores it under a freshly generated handle. Returns a packe
 
 | Status | Description |
 | ------ | ----------- |
-| `400 Bad Request` | `value` does not match `solidityType`, or `salt` is malformed |
+| `400 Bad Request` | `chain_id` is not a configured chain; `value` does not match `solidityType`; `salt` is malformed; or incorrect input data are given through the request |
 | `409 Conflict` | Handle already exists in S3 |
 | `500 Internal Server Error` | Encryption, signing, or S3 error |
 
@@ -243,7 +266,7 @@ struct HandleProof {
 
 #### `GET /v0/secrets/{handle}`
 
-Returns re-encrypted crypto material for a handle after verifying the caller's identity and ACL. The caller supplies their RSA public key in the authorization token; the gateway delegates to the KMS which RSA-OAEP-encrypts the shared secret for that key.
+Returns re-encrypted crypto material for a handle after verifying the caller's identity and ACL. The caller supplies their RSA public key in the authorization token; the Handle Gateway delegates to the KMS which RSA-OAEP-encrypts the shared secret for that key.
 
 **Headers:**
 
@@ -299,7 +322,7 @@ Returns re-encrypted crypto material for a handle after verifying the caller's i
 
 | Status | Description |
 | ------ | ----------- |
-| `400 Bad Request` | Handle path parameter is not valid 32-byte hex, or `salt` is malformed |
+| `400 Bad Request` | Handle is not valid 32-byte hex; handle encodes an unconfigured chain ID; or `salt` is malformed |
 | `401 Unauthorized` | Authorization token missing, malformed, expired, or wrongly signed |
 | `403 Forbidden` | Caller does not have viewer access to this handle |
 | `404 Not Found` | Handle does not exist in S3 |
@@ -343,10 +366,12 @@ Returns re-encrypted crypto material for a batch of operand handles. Intended fo
 ```json
 {
   "payload": {
+    "chainId": 421614,
+    "blockNumber": 12345678,
     "caller": "0x...",
+    "transactionHash": "0x...",
     "operands": ["0x...", "0x..."],
-    "rsaPublicKey": "0x3082...",
-    "transactionHash": "0x..."
+    "rsaPublicKey": "0x3082..."
   },
   "signature": "0x..."
 }
@@ -354,10 +379,12 @@ Returns re-encrypted crypto material for a batch of operand handles. Intended fo
 
 | Field | Description |
 | ----- | ----------- |
+| `payload.chainId` | Chain ID of the computation |
+| `payload.blockNumber` | Block number of the on-chain transaction that triggered the computation |
 | `payload.caller` | Ethereum address of the runner |
+| `payload.transactionHash` | On-chain transaction hash that triggered the computation |
 | `payload.operands` | List of handle hex strings to retrieve |
 | `payload.rsaPublicKey` | RSA public key in SPKI DER format, hex-encoded with `0x` prefix |
-| `payload.transactionHash` | On-chain transaction hash that triggered the computation |
 | `signature` | EIP-712 signature of `payload` by the runner address |
 
 **Success Response (200):**
@@ -382,10 +409,9 @@ Returns re-encrypted crypto material for a batch of operand handles. Intended fo
 
 | Status | Description |
 | ------ | ----------- |
-| `400 Bad Request` | One or more operand handles not found in S3, or `salt` is malformed |
+| `400 Bad Request` | `chainId` in the authorization token does not correspond to a configured chain; one or more operand handles not found in S3; or `salt` is malformed |
 | `401 Unauthorized` | Authorization token missing, malformed, or not signed by the configured runner |
 | `500 Internal Server Error` | S3 read error, or KMS delegation failed for one or more operands |
-| `503 Service Unavailable` | KMS unreachable |
 
 **EIP-712 Domain (for authorization `signature`):**
 
@@ -399,10 +425,12 @@ chainId: <configured_chain_id>
 
 ```solidity
 struct OperandAccessAuthorization {
+    uint256 chainId;
+    uint256 blockNumber;
     address caller;
+    string transactionHash;
     string[] operands;
     string rsaPublicKey;
-    string transactionHash;
 }
 ```
 
@@ -469,7 +497,7 @@ Stores computation result handles produced by the [nox-runner](https://github.co
 
 | Status | Description |
 | ------ | ----------- |
-| `400 Bad Request` | `salt` is malformed |
+| `400 Bad Request` | `chainId` in the authorization token does not correspond to a configured chain; or `salt` is malformed |
 | `401 Unauthorized` | Authorization token missing, malformed, or not signed by the configured runner |
 | `500 Internal Server Error` | S3 write failure |
 
@@ -498,6 +526,8 @@ struct ResultPublishingAuthorization {
 
 Reports which handles from a list are already stored in S3. Performs HEAD checks only; never returns encrypted payloads.
 
+The chain is inferred from the first handle in the batch. All handles must belong to the same chain; mixed-chain batches are rejected with `400`.
+
 **Request Body:**
 
 ```json
@@ -524,14 +554,14 @@ Reports which handles from a list are already stored in S3. Performs HEAD checks
 
 | Status | Description |
 | ------ | ----------- |
-| `400 Bad Request` | `salt` is malformed |
+| `400 Bad Request` | Empty handle batch; any handle is not valid 32-byte hex; handles span more than one chain ID; or `salt` is malformed |
 | `500 Internal Server Error` | Unexpected S3 error |
 
 ---
 
 #### `GET /v0/public/{handle}`
 
-Returns a verifiable decryption proof for a publicly decryptable handle. The gateway decrypts the value locally and packs the plaintext together with an EIP-712 `DecryptionProof` signature.
+Returns a verifiable decryption proof for a publicly decryptable handle. The Handle Gateway decrypts the value locally and packs the plaintext together with an EIP-712 `DecryptionProof` signature.
 
 **Success Response (200):**
 
@@ -553,7 +583,7 @@ Returns a verifiable decryption proof for a publicly decryptable handle. The gat
 
 | Status | Description |
 | ------ | ----------- |
-| `400 Bad Request` | Handle is not valid 32-byte hex, or `salt` is malformed |
+| `400 Bad Request` | Handle is not valid 32-byte hex; handle encodes an unknown solidity type or unconfigured chain ID; or `salt` is malformed |
 | `403 Forbidden` | Handle is not marked as publicly decryptable on-chain |
 | `404 Not Found` | Handle does not exist in S3 |
 | `500 Internal Server Error` | Crypto or signing failure |
@@ -584,7 +614,7 @@ struct DecryptionProof {
 | Repository | Role |
 | ---------- | ---- |
 | [nox-kms](https://github.com/iExec-Nox/nox-kms) | Key Management Service — performs ECDH/RSA delegation operations for authorized flows |
-| [nox-runner](https://github.com/iExec-Nox/nox-runner) | Off-chain computation runner — fetches operands and publishes results via this gateway |
+| [nox-runner](https://github.com/iExec-Nox/nox-runner) | Off-chain computation runner — fetches operands and publishes results via this Handle Gateway |
 
 ---
 
