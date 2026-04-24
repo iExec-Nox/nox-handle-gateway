@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.0](https://github.com/iExec-Nox/nox-handle-gateway/compare/v0.5.0...v0.6.0) (2026-04-24)
+
+
+### Features
+
+* add rate limit on concurrent S3 operations ([#66](https://github.com/iExec-Nox/nox-handle-gateway/issues/66)) ([d9a8db8](https://github.com/iExec-Nox/nox-handle-gateway/commit/d9a8db8e40bd044722bee14f1bad2fbd3a3b5e3d))
+* multi-chain RPC support with per-chain configuration ([#70](https://github.com/iExec-Nox/nox-handle-gateway/issues/70)) ([1a0e1d8](https://github.com/iExec-Nox/nox-handle-gateway/commit/1a0e1d8b26d3a29e4b45c849f7ade5ffb730d166))
+* support multiple S3 buckets with chain ID routing ([#67](https://github.com/iExec-Nox/nox-handle-gateway/issues/67)) ([4251c42](https://github.com/iExec-Nox/nox-handle-gateway/commit/4251c428c6f9fc1baff6ade9214444bd634c18ac))
+* use join_all to perform concurrent operations on S3 ([#64](https://github.com/iExec-Nox/nox-handle-gateway/issues/64)) ([16efbe5](https://github.com/iExec-Nox/nox-handle-gateway/commit/16efbe51f574334fe08bc14d83b35761fee5c64f))
+
 ## [0.5.0](https://github.com/iExec-Nox/nox-handle-gateway/compare/v0.4.0...v0.5.0) (2026-03-27)
 
 
