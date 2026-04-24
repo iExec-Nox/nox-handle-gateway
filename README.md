@@ -196,6 +196,7 @@ Encrypts a value and stores it under a freshly generated handle. Returns a packe
 | Parameter | Description | Required |
 | --------- | ----------- | -------- |
 | `chain_id` | Chain ID to use for this handle. Must correspond to a configured chain. When absent, the gateway falls back to `DEFAULT_CHAIN_ID` and logs a warning. | No |
+| `salt` | 32-byte hex value (`0x` + 64 hex chars) bound into the Handle Gateway EIP-712 response-signing domain. Defaults to `bytes32(0)` when omitted. | No |
 
 **Request Body:**
 
@@ -321,7 +322,7 @@ Returns re-encrypted crypto material for a handle after verifying the caller's i
 
 | Status | Description |
 | ------ | ----------- |
-| `400 Bad Request` | Handle path parameter is not valid 32-byte hex, or `salt` is malformed |
+| `400 Bad Request` | Handle is not valid 32-byte hex; handle encodes an unconfigured chain ID; or `salt` is malformed |
 | `401 Unauthorized` | Authorization token missing, malformed, expired, or wrongly signed |
 | `403 Forbidden` | Caller does not have viewer access to this handle |
 | `404 Not Found` | Handle does not exist in S3 |
@@ -365,10 +366,12 @@ Returns re-encrypted crypto material for a batch of operand handles. Intended fo
 ```json
 {
   "payload": {
+    "chainId": 421614,
+    "blockNumber": 12345678,
     "caller": "0x...",
+    "transactionHash": "0x...",
     "operands": ["0x...", "0x..."],
-    "rsaPublicKey": "0x3082...",
-    "transactionHash": "0x..."
+    "rsaPublicKey": "0x3082..."
   },
   "signature": "0x..."
 }
@@ -376,10 +379,12 @@ Returns re-encrypted crypto material for a batch of operand handles. Intended fo
 
 | Field | Description |
 | ----- | ----------- |
+| `payload.chainId` | Chain ID of the computation |
+| `payload.blockNumber` | Block number of the on-chain transaction that triggered the computation |
 | `payload.caller` | Ethereum address of the runner |
+| `payload.transactionHash` | On-chain transaction hash that triggered the computation |
 | `payload.operands` | List of handle hex strings to retrieve |
 | `payload.rsaPublicKey` | RSA public key in SPKI DER format, hex-encoded with `0x` prefix |
-| `payload.transactionHash` | On-chain transaction hash that triggered the computation |
 | `signature` | EIP-712 signature of `payload` by the runner address |
 
 **Success Response (200):**
@@ -404,10 +409,9 @@ Returns re-encrypted crypto material for a batch of operand handles. Intended fo
 
 | Status | Description |
 | ------ | ----------- |
-| `400 Bad Request` | One or more operand handles not found in S3, or `salt` is malformed |
+| `400 Bad Request` | `chainId` in the authorization token does not correspond to a configured chain; one or more operand handles not found in S3; or `salt` is malformed |
 | `401 Unauthorized` | Authorization token missing, malformed, or not signed by the configured runner |
 | `500 Internal Server Error` | S3 read error, or KMS delegation failed for one or more operands |
-| `503 Service Unavailable` | KMS unreachable |
 
 **EIP-712 Domain (for authorization `signature`):**
 
@@ -421,10 +425,12 @@ chainId: <configured_chain_id>
 
 ```solidity
 struct OperandAccessAuthorization {
+    uint256 chainId;
+    uint256 blockNumber;
     address caller;
+    string transactionHash;
     string[] operands;
     string rsaPublicKey;
-    string transactionHash;
 }
 ```
 
@@ -491,7 +497,7 @@ Stores computation result handles produced by the [nox-runner](https://github.co
 
 | Status | Description |
 | ------ | ----------- |
-| `400 Bad Request` | `salt` is malformed |
+| `400 Bad Request` | `chainId` in the authorization token does not correspond to a configured chain; or `salt` is malformed |
 | `401 Unauthorized` | Authorization token missing, malformed, or not signed by the configured runner |
 | `500 Internal Server Error` | S3 write failure |
 
@@ -520,6 +526,8 @@ struct ResultPublishingAuthorization {
 
 Reports which handles from a list are already stored in S3. Performs HEAD checks only; never returns encrypted payloads.
 
+The chain is inferred from the first handle in the batch. All handles must belong to the same chain; mixed-chain batches are rejected with `400`.
+
 **Request Body:**
 
 ```json
@@ -546,7 +554,7 @@ Reports which handles from a list are already stored in S3. Performs HEAD checks
 
 | Status | Description |
 | ------ | ----------- |
-| `400 Bad Request` | `salt` is malformed |
+| `400 Bad Request` | Empty handle batch; any handle is not valid 32-byte hex; handles span more than one chain ID; or `salt` is malformed |
 | `500 Internal Server Error` | Unexpected S3 error |
 
 ---
@@ -575,7 +583,7 @@ Returns a verifiable decryption proof for a publicly decryptable handle. The gat
 
 | Status | Description |
 | ------ | ----------- |
-| `400 Bad Request` | Handle is not valid 32-byte hex, or `salt` is malformed |
+| `400 Bad Request` | Handle is not valid 32-byte hex; handle encodes an unknown solidity type or unconfigured chain ID; or `salt` is malformed |
 | `403 Forbidden` | Handle is not marked as publicly decryptable on-chain |
 | `404 Not Found` | Handle does not exist in S3 |
 | `500 Internal Server Error` | Crypto or signing failure |
