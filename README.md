@@ -35,15 +35,15 @@
 
 The Handle Gateway is the off-chain custody layer for encrypted values referenced by on-chain handles. It is the only service that writes ciphertexts to storage and the only service that calls [nox-kms](https://github.com/iExec-Nox/nox-kms) to delegate re-encrypted material. All responses carry an EIP-712 signature so callers can verify origin cryptographically.
 
-**Storing an encrypted value (`POST /v0/secrets`):** A caller submits a plaintext value to be stored confidentially. The gateway encrypts it under the KMS public key using ECIES (secp256k1 ECDH + HKDF-SHA256 + AES-256-GCM), generates a 32-byte handle as the on-chain reference, and returns a signed `HandleProof` that smart contracts can verify to confirm the handle was legitimately created by this gateway.
+**Storing an encrypted value (`POST /v0/secrets`):** A caller submits a plaintext value to be stored confidentially. The Handle Gateway encrypts it under the KMS public key using ECIES (secp256k1 ECDH + HKDF-SHA256 + AES-256-GCM), generates a 32-byte handle as the on-chain reference, and returns a signed `HandleProof` that smart contracts can verify to confirm the handle was legitimately created by this Handle Gateway.
 
-**Decrypting a value (`GET /v0/secrets/{handle}`):** An authorised party (owner or ACL grantee) retrieves the encrypted material for a handle. The gateway verifies the caller's EIP-712 token, checks on-chain ACL, and delegates to [nox-kms](https://github.com/iExec-Nox/nox-kms) which RSA-OAEP-encrypts the shared secret for the caller's RSA key. The caller decrypts locally; the KMS private key never leaves the KMS.
+**Decrypting a value (`GET /v0/secrets/{handle}`):** An authorised party (owner or ACL grantee) retrieves the encrypted material for a handle. The Handle Gateway verifies the caller's EIP-712 token, checks on-chain ACL, and delegates to [nox-kms](https://github.com/iExec-Nox/nox-kms) which RSA-OAEP-encrypts the shared secret for the caller's RSA key. The caller decrypts locally; the KMS private key never leaves the KMS.
 
 **Confidential computation (`GET /v0/compute/operands`, `POST /v0/compute/results`):** The off-chain [nox-runner](https://github.com/iExec-Nox/nox-runner) uses these endpoints to fetch encrypted inputs before a computation and publish encrypted outputs after. This enables computation over confidential handles without the runner ever seeing plaintext values.
 
 **Polling handle resolution (`POST /v0/public/handles/status`):** Any caller can check whether a batch of handles is already stored.
 
-**Public decryption (`GET /v0/public/{handle}`):** When the handle owner has granted public decryptability on-chain, anyone can retrieve the plaintext. The gateway delegates to [nox-kms](https://github.com/iExec-Nox/nox-kms) using its own RSA key, decrypts locally, and returns a `DecryptionProof` signed by the gateway that proves the decryption was performed correctly.
+**Public decryption (`GET /v0/public/{handle}`):** When the handle owner has granted public decryptability on-chain, anyone can retrieve the plaintext. The Handle Gateway delegates to [nox-kms](https://github.com/iExec-Nox/nox-kms) using its own RSA key, decrypts locally, and returns a `DecryptionProof` signed by the Handle Gateway that proves the decryption was performed correctly.
 
 ---
 
@@ -84,7 +84,7 @@ cargo run --release
 
 Configuration is loaded from environment variables with the `NOX_HANDLE_GATEWAY_` prefix. Nested properties use double underscore (`__`) as separator.
 
-The gateway supports multiple chains simultaneously. Repeat the `CHAINS__<CHAIN_ID>__*` block for every chain the gateway should serve.
+The Handle Gateway supports multiple chains simultaneously. Repeat the `CHAINS__<CHAIN_ID>__*` block for every chain the Handle Gateway should serve.
 
 ### Global variables
 
@@ -195,7 +195,7 @@ Encrypts a value and stores it under a freshly generated handle. Returns a packe
 
 | Parameter | Description | Required |
 | --------- | ----------- | -------- |
-| `chain_id` | Chain ID to use for this handle. Must correspond to a configured chain. When absent, the gateway falls back to `DEFAULT_CHAIN_ID` and logs a warning. | No |
+| `chain_id` | Chain ID to use for this handle. Must correspond to a configured chain. When absent, the Handle Gateway falls back to `DEFAULT_CHAIN_ID` and logs a warning. | No |
 | `salt` | 32-byte hex value (`0x` + 64 hex chars) bound into the Handle Gateway EIP-712 response-signing domain. Defaults to `bytes32(0)` when omitted. | No |
 
 **Request Body:**
@@ -266,7 +266,7 @@ struct HandleProof {
 
 #### `GET /v0/secrets/{handle}`
 
-Returns re-encrypted crypto material for a handle after verifying the caller's identity and ACL. The caller supplies their RSA public key in the authorization token; the gateway delegates to the KMS which RSA-OAEP-encrypts the shared secret for that key.
+Returns re-encrypted crypto material for a handle after verifying the caller's identity and ACL. The caller supplies their RSA public key in the authorization token; the Handle Gateway delegates to the KMS which RSA-OAEP-encrypts the shared secret for that key.
 
 **Headers:**
 
@@ -561,7 +561,7 @@ The chain is inferred from the first handle in the batch. All handles must belon
 
 #### `GET /v0/public/{handle}`
 
-Returns a verifiable decryption proof for a publicly decryptable handle. The gateway decrypts the value locally and packs the plaintext together with an EIP-712 `DecryptionProof` signature.
+Returns a verifiable decryption proof for a publicly decryptable handle. The Handle Gateway decrypts the value locally and packs the plaintext together with an EIP-712 `DecryptionProof` signature.
 
 **Success Response (200):**
 
@@ -614,7 +614,7 @@ struct DecryptionProof {
 | Repository | Role |
 | ---------- | ---- |
 | [nox-kms](https://github.com/iExec-Nox/nox-kms) | Key Management Service — performs ECDH/RSA delegation operations for authorized flows |
-| [nox-runner](https://github.com/iExec-Nox/nox-runner) | Off-chain computation runner — fetches operands and publishes results via this gateway |
+| [nox-runner](https://github.com/iExec-Nox/nox-runner) | Off-chain computation runner — fetches operands and publishes results via this Handle Gateway |
 
 ---
 
