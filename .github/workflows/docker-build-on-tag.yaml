@@ -56,3 +56,45 @@ jobs:
       dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN_PULL_ONLY }}
       username: ${{ secrets.DOCKERREGIS_USERNAME }}
       password: ${{ secrets.DOCKERREGIS_PASSWORD }}
+
+  build-dockerhub-multiplatform:
+    name: Build and push multi-platform image to DockerHub
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx (Docker Build Cloud)
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver: cloud
+          endpoint: ${{ secrets.DOCKER_CLOUD_BUILDER }}
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          DOCKERHUB_ORG=$(echo "${{ secrets.DOCKER_CLOUD_BUILDER }}" | cut -d'/' -f1)
+          [ -z "${DOCKERHUB_ORG}" ] && { echo "ERROR: could not extract org from DOCKER_CLOUD_BUILDER"; exit 1; }
+
+          {
+            echo "tags<<EOF"
+            echo "${DOCKERHUB_ORG}/nox-handle-gateway:${{ needs.prepare.outputs.image_tag }}"
+            echo "${DOCKERHUB_ORG}/nox-handle-gateway:latest"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push multi-platform image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
