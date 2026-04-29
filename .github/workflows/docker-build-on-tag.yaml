@@ -4,13 +4,6 @@ on:
   push:
     tags:
       - 'v*.*.*'
-  # ⚠️ TEST ONLY — remove before merge to main
-  workflow_dispatch:
-    inputs:
-      image_tag:
-        description: 'Image tag to use (test only)'
-        default: 'test-dispatch'
-        required: false
 
 jobs:
   prepare:
@@ -29,12 +22,6 @@ jobs:
       - name: Determine base tag
         id: determine-tag
         run: |
-          # ⚠️ TEST ONLY — remove before merge to main
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "image_tag=${{ inputs.image_tag }}" | tee -a $GITHUB_OUTPUT
-            exit 0
-          fi
-
           # Since this workflow only triggers on tags matching 'v*.*.*' we know we're always dealing with a version tag
           TAG_ON_MAIN=$(git branch -r --contains ${{ github.sha }} 'origin/main')
 
@@ -52,7 +39,6 @@ jobs:
   build-oci-image:
     name: Build OCI image
     needs: prepare
-    if: github.event_name != 'workflow_dispatch'  # ⚠️ TEST ONLY — remove before merge to main
     uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build.yml@docker-build-v3.3.0
     with:
       image-name: docker-regis.iex.ec/nox-handle-gateway
@@ -100,9 +86,7 @@ jobs:
           {
             echo "tags<<EOF"
             echo "${DOCKERHUB_ORG}/nox-handle-gateway:${{ needs.prepare.outputs.image_tag }}"
-            if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
-              echo "${DOCKERHUB_ORG}/nox-handle-gateway:latest"
-            fi
+            echo "${DOCKERHUB_ORG}/nox-handle-gateway:latest"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
