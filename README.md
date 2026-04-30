@@ -554,7 +554,7 @@ The chain is inferred from the first handle in the batch. All handles must belon
 
 | Status | Description |
 | ------ | ----------- |
-| `400 Bad Request` | Empty handle batch; any handle is not valid 32-byte hex; handles span more than one chain ID; or `salt` is malformed |
+| `400 Bad Request` | Empty handle batch; any handle is not valid 32-byte hex; handles span more than one chain ID; `salt` is malformed; or batch size exceeds 10 × `max_concurrent_requests` (configurable per chain via `S3.max_concurrent_requests`, default 100 → cap 1000) |
 | `500 Internal Server Error` | Unexpected S3 error |
 
 ---
