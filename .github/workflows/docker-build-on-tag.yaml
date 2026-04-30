@@ -4,6 +4,13 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  # TEMP: remove before merge — staging dispatch for the new reusable workflow
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to use (test only)'
+        default: 'test-reusable-1'
+        required: false
 
 jobs:
   prepare:
@@ -21,7 +28,15 @@ jobs:
 
       - name: Determine base tag
         id: determine-tag
+        env:
+          DISPATCH_IMAGE_TAG: ${{ inputs.image_tag }}  # TEMP: remove before merge — staging dispatch input
         run: |
+          # TEMP: remove before merge — staging dispatch short-circuit
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "image_tag=${DISPATCH_IMAGE_TAG}" | tee -a $GITHUB_OUTPUT
+            exit 0
+          fi
+
           # Since this workflow only triggers on tags matching 'v*.*.*' we know we're always dealing with a version tag
           TAG_ON_MAIN=$(git branch -r --contains ${{ github.sha }} 'origin/main')
 
@@ -35,10 +50,10 @@ jobs:
           echo "Processing tag on main branch: ${{ github.ref_name }}"
           echo "image_tag=${GITHUB_REF_NAME#v}" | tee -a $GITHUB_OUTPUT
 
-
   build-oci-image:
     name: Build OCI image
     needs: prepare
+    if: github.event_name != 'workflow_dispatch'  # TEMP: remove before merge — skip internal-registry build on staging dispatch
     uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build.yml@docker-build-v3.3.0
     with:
       image-name: docker-regis.iex.ec/nox-handle-gateway
@@ -60,41 +75,14 @@ jobs:
   build-dockerhub-multiplatform:
     name: Build and push multi-platform image to DockerHub
     needs: prepare
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Log in to DockerHub
-        uses: docker/login-action@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Set up Docker Buildx (Docker Build Cloud)
-        uses: docker/setup-buildx-action@v4
-        with:
-          driver: cloud
-          endpoint: ${{ secrets.DOCKER_CLOUD_BUILDER }}
-
-      - name: Compute image tags
-        id: tags
-        run: |
-          DOCKERHUB_ORG=$(echo "${{ secrets.DOCKER_CLOUD_BUILDER }}" | cut -d'/' -f1)
-          [ -z "${DOCKERHUB_ORG}" ] && { echo "ERROR: could not extract org from DOCKER_CLOUD_BUILDER"; exit 1; }
-
-          {
-            echo "tags<<EOF"
-            echo "${DOCKERHUB_ORG}/nox-handle-gateway:${{ needs.prepare.outputs.image_tag }}"
-            echo "${DOCKERHUB_ORG}/nox-handle-gateway:latest"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Build and push multi-platform image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.tags.outputs.tags }}
+    # TEMP: remove before merge — pinned to feat branch for staging; switch to @docker-build-cloud-v0.1.0 once the workflows-repo release-please tag lands (the feat branch will be deleted post-merge there)
+    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build-cloud.yml@feat/docker-build-cloud
+    with:
+      image-name: iexechub/nox-handle-gateway
+      image-tag: ${{ needs.prepare.outputs.image_tag }}
+      platforms: linux/amd64,linux/arm64
+      cloud-builder-endpoint: ${{ vars.DOCKER_CLOUD_BUILDER_LABEL }}
+      push-latest: true
+    secrets:
+      dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+      dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}
