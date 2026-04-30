@@ -4,13 +4,6 @@ on:
   push:
     tags:
       - 'v*.*.*'
-  # TEMP: remove before merge — staging dispatch for the new reusable workflow
-  workflow_dispatch:
-    inputs:
-      image_tag:
-        description: 'Image tag to use (test only)'
-        default: 'test-reusable-1'
-        required: false
 
 jobs:
   prepare:
@@ -28,15 +21,7 @@ jobs:
 
       - name: Determine base tag
         id: determine-tag
-        env:
-          DISPATCH_IMAGE_TAG: ${{ inputs.image_tag }}  # TEMP: remove before merge — staging dispatch input
         run: |
-          # TEMP: remove before merge — staging dispatch short-circuit
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "image_tag=${DISPATCH_IMAGE_TAG}" | tee -a $GITHUB_OUTPUT
-            exit 0
-          fi
-
           # Since this workflow only triggers on tags matching 'v*.*.*' we know we're always dealing with a version tag
           TAG_ON_MAIN=$(git branch -r --contains ${{ github.sha }} 'origin/main')
 
@@ -53,7 +38,6 @@ jobs:
   build-oci-image:
     name: Build OCI image
     needs: prepare
-    if: github.event_name != 'workflow_dispatch'  # TEMP: remove before merge — skip internal-registry build on staging dispatch
     uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build.yml@docker-build-v3.3.0
     with:
       image-name: docker-regis.iex.ec/nox-handle-gateway
@@ -75,8 +59,7 @@ jobs:
   build-dockerhub-multiplatform:
     name: Build and push multi-platform image to DockerHub
     needs: prepare
-    # TEMP: remove before merge — pinned to feat branch for staging; switch to @docker-build-cloud-v0.1.0 once the workflows-repo release-please tag lands (the feat branch will be deleted post-merge there)
-    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build-cloud.yml@feat/docker-build-cloud
+    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build-cloud.yml@docker-build-cloud-v0.1.0
     with:
       image-name: iexechub/nox-handle-gateway
       image-tag: ${{ needs.prepare.outputs.image_tag }}
