@@ -65,7 +65,6 @@ jobs:
       image-tag: ${{ needs.prepare.outputs.image_tag }}
       platforms: linux/amd64,linux/arm64
       cloud-builder-endpoint: ${{ vars.DOCKER_CLOUD_BUILDER_LABEL }}
-      push-latest: true
     secrets:
       dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
       dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}
