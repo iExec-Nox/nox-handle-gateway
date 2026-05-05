@@ -4,14 +4,6 @@ on:
   push:
     tags:
       - 'v*.*.*'
-  # TEMP: manual trigger to test docker-build-cloud reusable workflow before tagging it.
-  # Remove this `workflow_dispatch` block (and the related `if:` guards below) before merging.
-  workflow_dispatch:
-    inputs:
-      image_tag:
-        description: "Image tag to publish (e.g. 0.6.0-test)"
-        required: true
-        type: string
 
 jobs:
   prepare:
@@ -29,15 +21,7 @@ jobs:
 
       - name: Determine base tag
         id: determine-tag
-        env:
-          DISPATCH_TAG: ${{ inputs.image_tag }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "Manual dispatch — using provided image tag: ${DISPATCH_TAG}"
-            echo "image_tag=${DISPATCH_TAG}" | tee -a $GITHUB_OUTPUT
-            exit 0
-          fi
-
           # Since this workflow only triggers on tags matching 'v*.*.*' we know we're always dealing with a version tag
           TAG_ON_MAIN=$(git branch -r --contains ${{ github.sha }} 'origin/main')
 
@@ -54,8 +38,6 @@ jobs:
   build-oci-image:
     name: Build OCI image
     needs: prepare
-    # TEMP: skip on manual dispatch — manual runs only test docker-build-cloud
-    if: github.event_name == 'push'
     uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build.yml@docker-build-v3.3.0
     with:
       image-name: docker-regis.iex.ec/nox-handle-gateway
@@ -77,8 +59,7 @@ jobs:
   build-dockerhub-multiplatform:
     name: Build and push multi-platform image to DockerHub
     needs: prepare
-    # TEMP: pinned to PR branch to test the workflow before release. Bump to docker-build-cloud-v0.1.0 after release-please tags it.
-    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build-cloud.yml@feat/docker-build-cloud
+    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build-cloud.yml@docker-build-cloud-v0.1.0
     with:
       image-name: iexechub/nox-handle-gateway
       image-tag: ${{ needs.prepare.outputs.image_tag }}
