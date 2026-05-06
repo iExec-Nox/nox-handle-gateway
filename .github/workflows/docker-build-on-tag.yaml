@@ -59,7 +59,7 @@ jobs:
   build-dockerhub-multiplatform:
     name: Build and push multi-platform image to DockerHub
     needs: prepare
-    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build-cloud.yml@docker-build-cloud-v0.1.0
+    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build-cloud.yml@docker-build-cloud-v1.0.0
     with:
       image-name: iexechub/nox-handle-gateway
       image-tag: ${{ needs.prepare.outputs.image_tag }}
