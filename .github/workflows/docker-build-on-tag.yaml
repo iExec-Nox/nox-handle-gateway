@@ -35,7 +35,6 @@ jobs:
           echo "Processing tag on main branch: ${{ github.ref_name }}"
           echo "image_tag=${GITHUB_REF_NAME#v}" | tee -a $GITHUB_OUTPUT
 
-
   build-oci-image:
     name: Build OCI image
     needs: prepare
@@ -56,3 +55,16 @@ jobs:
       dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN_PULL_ONLY }}
       username: ${{ secrets.DOCKERREGIS_USERNAME }}
       password: ${{ secrets.DOCKERREGIS_PASSWORD }}
+
+  build-dockerhub-multiplatform:
+    name: Build and push multi-platform image to DockerHub
+    needs: prepare
+    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build-cloud.yml@docker-build-cloud-v1.0.0
+    with:
+      image-name: iexechub/nox-handle-gateway
+      image-tag: ${{ needs.prepare.outputs.image_tag }}
+      platforms: linux/amd64,linux/arm64
+      cloud-builder-endpoint: ${{ vars.DOCKER_CLOUD_BUILDER_LABEL }}
+    secrets:
+      dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+      dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}
