@@ -868,7 +868,7 @@ pub struct HandleStatusReportResponse {
 /// # HTTP responses
 ///
 /// - `200 OK` — JSON object `{ "payload": { "statuses": [{ "handle", "resolved" }] }, "signature": "0x..." }`.
-/// - `400 Bad Request` — empty batch, mixed-chain batch, or batch larger than `10 × max_concurrent_requests` for the resolved chain.
+/// - `400 Bad Request` — empty batch, mixed-chain batch, or batch larger than `max_handles_per_request` for the resolved chain.
 /// - `500 Internal Server Error` — unexpected S3 error (e.g. network failure or permission error).
 pub async fn handle_status(
     State(state): State<AppState>,
@@ -888,7 +888,7 @@ pub async fn handle_status(
         .config
         .chains
         .get(&chain_id)
-        .map(|c| c.s3.max_concurrent_requests.saturating_mul(10))
+        .map(|c| c.s3.max_handles_per_request)
         .ok_or(AppError::UnknownChain(chain_id))?;
     if request.handles.len() > limit {
         return Err(AppError::BatchTooLarge {

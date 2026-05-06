@@ -554,11 +554,8 @@ impl BucketRepository {
     /// bucket's `max_concurrent_requests` semaphore. Any S3 error other than
     /// 404 is propagated immediately.
     pub async fn handles_exist(&self, ids: &[String]) -> Result<HashMap<String, bool>, S3Error> {
-        let repo = self.clone();
-        let owned_ids: Vec<String> = ids.to_vec();
-        let results: Vec<_> = join_all(owned_ids.iter().map(|id| {
-            let repo = repo.clone();
-            let id = id.clone();
+        let results = join_all(ids.iter().map(|id| {
+            let repo = self.clone();
             async move {
                 let _permit = repo
                     .semaphore
@@ -567,7 +564,9 @@ impl BucketRepository {
                     .map_err(|e| S3Error::S3Operation {
                         message: format!("semaphore error: {e}"),
                     })?;
-                repo.head_handle(&id).await.map(|opt| (id, opt.is_some()))
+                repo.head_handle(id)
+                    .await
+                    .map(|opt| (id.clone(), opt.is_some()))
             }
         }))
         .await;

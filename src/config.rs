@@ -76,6 +76,8 @@ pub struct S3Config {
     pub endpoint_url: Option<String>,
     #[serde(default = "default_s3_max_concurrent_requests")]
     pub max_concurrent_requests: usize,
+    #[serde(default = "default_s3_max_handles_per_request")]
+    pub max_handles_per_request: usize,
     #[serde(default = "default_s3_object_lock_enabled")]
     pub object_lock_enabled: bool,
     pub region: String,
@@ -96,6 +98,11 @@ fn default_s3_object_lock_enabled() -> bool {
 /// Default maximum number of concurrent in-flight S3 requests.
 fn default_s3_max_concurrent_requests() -> usize {
     100
+}
+
+/// Default maximum number of handles accepted in a single status request.
+fn default_s3_max_handles_per_request() -> usize {
+    1000
 }
 
 /// KMS service configuration.
