@@ -112,6 +112,7 @@ The Handle Gateway supports multiple chains simultaneously. Repeat the `CHAINS__
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__ENDPOINT_URL` | Custom S3/MinIO endpoint. Absent = AWS standard regional endpoints | No | *(none)* |
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__TIMEOUT` | S3 operation timeout (seconds) | No | `30` |
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__MAX_CONCURRENT_REQUESTS` | Max S3 requests in-flight concurrently | No | `100` |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__MAX_HANDLES_PER_REQUEST` | Max handles accepted in a single `POST /v0/public/handles/status` batch | No | `1000` |
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__OBJECT_LOCK_ENABLED` | Set `false` for buckets without Object Lock (e.g. Sepolia) | No | `true` |
 
 For sensitive values, you can use the `_FILE` suffix to load from a file:
@@ -554,7 +555,7 @@ The chain is inferred from the first handle in the batch. All handles must belon
 
 | Status | Description |
 | ------ | ----------- |
-| `400 Bad Request` | Empty handle batch; any handle is not valid 32-byte hex; handles span more than one chain ID; or `salt` is malformed |
+| `400 Bad Request` | Empty handle batch; any handle is not valid 32-byte hex; handles span more than one chain ID; `salt` is malformed; or batch size exceeds 10 × `max_concurrent_requests` (configurable per chain via `S3.max_concurrent_requests`, default 100 → cap 1000) |
 | `500 Internal Server Error` | Unexpected S3 error |
 
 ---

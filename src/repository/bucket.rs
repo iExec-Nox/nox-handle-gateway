@@ -550,14 +550,32 @@ impl BucketRepository {
 
     /// Returns the resolution status of each id in `ids`.
     ///
-    /// Uses HEAD requests to check each key. Any S3 error other than 404 is
-    /// propagated immediately.
+    /// Dispatches HEAD requests for every key concurrently, throttled by the
+    /// bucket's `max_concurrent_requests` semaphore. Any S3 error other than
+    /// 404 is propagated immediately.
     pub async fn handles_exist(&self, ids: &[String]) -> Result<HashMap<String, bool>, S3Error> {
-        let mut result = HashMap::with_capacity(ids.len());
-        for id in ids {
-            let exists = self.head_handle(id).await?.is_some();
-            result.insert(id.clone(), exists);
+        let results = join_all(ids.iter().map(|id| {
+            let repo = self.clone();
+            async move {
+                let _permit = repo
+                    .semaphore
+                    .acquire()
+                    .await
+                    .map_err(|e| S3Error::S3Operation {
+                        message: format!("semaphore error: {e}"),
+                    })?;
+                repo.head_handle(id)
+                    .await
+                    .map(|opt| (id.clone(), opt.is_some()))
+            }
+        }))
+        .await;
+
+        let mut out = HashMap::with_capacity(ids.len());
+        for r in results {
+            let (id, exists) = r?;
+            out.insert(id, exists);
         }
-        Ok(result)
+        Ok(out)
     }
 }
