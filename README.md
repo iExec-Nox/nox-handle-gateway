@@ -112,6 +112,7 @@ The Handle Gateway supports multiple chains simultaneously. Repeat the `CHAINS__
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__ENDPOINT_URL` | Custom S3/MinIO endpoint. Absent = AWS standard regional endpoints | No | *(none)* |
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__TIMEOUT` | S3 operation timeout (seconds) | No | `30` |
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__MAX_CONCURRENT_REQUESTS` | Max S3 requests in-flight concurrently | No | `100` |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__MAX_HANDLES_PER_REQUEST` | Max handles accepted in a single `POST /v0/public/handles/status` batch | No | `1000` |
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__OBJECT_LOCK_ENABLED` | Set `false` for buckets without Object Lock (e.g. Sepolia) | No | `true` |
 
 For sensitive values, you can use the `_FILE` suffix to load from a file:
