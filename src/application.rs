@@ -106,31 +106,22 @@ impl Application {
     /// Initialises all dependencies and runs the HTTP server until a shutdown signal.
     ///
     /// Startup order:
-    /// 1. Validate CORS allowed headers from config
-    /// 2. Validate at least one chain is configured
-    /// 3. For each chain: connect to NoxCompute, fetch KMS public key, load signer,
+    /// 1. For each chain: connect to NoxCompute, fetch KMS public key, load signer,
     ///    cross-check signer address against on-chain `gateway()` address
-    /// 4. Build [`CryptoService`] with per-chain KMS public keys
-    /// 5. Build [`KmsClient`] and validate S3 buckets
-    /// 6. Bind the TCP listener and serve until `SIGTERM` / `Ctrl+C`
+    /// 2. Build [`CryptoService`] with per-chain KMS public keys
+    /// 3. Build [`KmsClient`] and validate S3 buckets
+    /// 4. Bind the TCP listener and serve until `SIGTERM` / `Ctrl+C`
+    ///
+    /// CORS header names and presence of at least one chain are enforced by
+    /// [`Config`] validation in `main`, so this method assumes both are valid.
     pub async fn run(self) -> anyhow::Result<()> {
         let cors_allowed_headers: Vec<HeaderName> = self
             .config
             .server
             .cors_allowed_headers
             .iter()
-            .map(|h| {
-                HeaderName::from_bytes(h.as_bytes()).map_err(|_| {
-                    anyhow::anyhow!(
-                        "Invalid CORS header name in SERVER__CORS_ALLOWED_HEADERS: {h:?}"
-                    )
-                })
-            })
-            .collect::<anyhow::Result<_>>()?;
-
-        if self.config.chains.is_empty() {
-            anyhow::bail!("at least one chain must be configured");
-        }
+            .map(|h| HeaderName::from_bytes(h.as_bytes()).expect("validated by Config::validate"))
+            .collect();
 
         let mut nox_clients: HashMap<u32, NoxClient> = HashMap::new();
         let mut protocol_keys = HashMap::new();

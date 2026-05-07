@@ -25,6 +25,7 @@ pub mod validation;
 
 use tracing::{debug, error};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use validator::Validate;
 
 use crate::application::Application;
 use crate::config::Config;
@@ -43,6 +44,9 @@ async fn main() -> anyhow::Result<()> {
         error!("Failed to load configuration: {e}");
         e
     })?;
+    config
+        .validate()
+        .inspect_err(|e| error!("Invalid configuration: {e}"))?;
     debug!("Configuration loaded");
 
     Application::new(config).run().await?;
