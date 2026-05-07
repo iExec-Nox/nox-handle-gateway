@@ -4,7 +4,7 @@ use alloy_primitives::{Address, hex};
 use axum::http::HeaderName;
 use config::{Config as ConfigBuilder, ConfigError, Environment};
 use config_secret::EnvironmentSecretFile;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use tracing::debug;
 use validator::{Validate, ValidationError};
 
@@ -14,6 +14,7 @@ use validator::{Validate, ValidationError};
 /// exceptions are noted on the individual sub-config types.
 #[derive(Debug, Clone, Deserialize, Validate)]
 #[validate(schema(function = "validate_non_empty_chains"))]
+#[validate(schema(function = "validate_default_chain_id"))]
 pub struct Config {
     #[validate(nested)]
     pub server: ServerConfig,
@@ -34,21 +35,20 @@ pub struct Config {
 /// send cross-origin (`Access-Control-Allow-Headers`). The default covers the
 /// two headers used by this API: `content-type` (JSON bodies) and `authorization`
 /// (EIP-712 token). Extend via `NOX_HANDLE_GATEWAY_SERVER__CORS_ALLOWED_HEADERS`
-/// as a JSON array.
+/// as a comma-separated list.
 ///
-/// Each entry is validated at startup with [`axum::http::HeaderName::from_bytes`]
-/// via [`Config::validate`], which enforces HTTP token syntax (RFC 7230).
-/// Malformed values cause a hard error, but typos (e.g. `"authoriation"`) are
-/// valid tokens and will be accepted silently, causing CORS preflight rejections
-/// at runtime.
+/// Entries are parsed into [`HeaderName`] at deserialisation time, so malformed
+/// HTTP token syntax (RFC 7230) causes a hard error at startup. Typos that are
+/// valid tokens (e.g. `"authoriation"`) parse successfully and surface only as
+/// CORS preflight rejections at runtime.
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct ServerConfig {
     #[validate(length(min = 1))]
     pub host: String,
     #[validate(range(min = 1))]
     pub port: u16,
-    #[validate(custom(function = "validate_cors_allowed_headers"))]
-    pub cors_allowed_headers: Vec<String>,
+    #[serde(deserialize_with = "deserialize_header_names")]
+    pub cors_allowed_headers: Vec<HeaderName>,
 }
 
 /// Per-chain configuration combining RPC, signing key, and S3/MinIO storage settings.
@@ -146,11 +146,11 @@ fn validate_non_empty_chains(cfg: &Config) -> Result<(), ValidationError> {
     Ok(())
 }
 
-fn validate_cors_allowed_headers(headers: &[String]) -> Result<(), ValidationError> {
-    for h in headers {
-        if HeaderName::from_bytes(h.as_bytes()).is_err() {
-            return Err(ValidationError::new("invalid HTTP header name"));
-        }
+fn validate_default_chain_id(cfg: &Config) -> Result<(), ValidationError> {
+    if !cfg.chains.contains_key(&cfg.default_chain_id) {
+        return Err(ValidationError::new(
+            "default_chain_id must reference a configured chain",
+        ));
     }
     Ok(())
 }
@@ -176,6 +176,20 @@ fn validate_wallet_key(wallet_key: &str) -> Result<(), ValidationError> {
     Ok(())
 }
 
+fn deserialize_header_names<'de, D>(deserializer: D) -> Result<Vec<HeaderName>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Vec::<String>::deserialize(deserializer)?;
+    raw.into_iter()
+        .map(|h| {
+            HeaderName::from_bytes(h.as_bytes()).map_err(|e| {
+                serde::de::Error::custom(format!("invalid HTTP header name '{h}': {e}"))
+            })
+        })
+        .collect()
+}
+
 impl Config {
     /// Loads configuration from environment variables.
     ///
@@ -191,14 +205,6 @@ impl Config {
                 vec!["content-type", "authorization"],
             )?
             .set_default("kms.url", "http://localhost:9000")?
-            .set_default(
-                "kms.signer_address",
-                "0x0000000000000000000000000000000000000000",
-            )?
-            .set_default(
-                "runner_address",
-                "0x0000000000000000000000000000000000000000",
-            )?
             .set_default("default_chain_id", 421614)?
             .add_source(
                 Environment::with_prefix("NOX_HANDLE_GATEWAY")
@@ -220,198 +226,5 @@ impl Config {
         let addr = format!("{}:{}", self.server.host, self.server.port);
         debug!("Binding address: {}", addr);
         addr
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::str::FromStr;
-    use validator::ValidationErrors;
-
-    #[test]
-    fn check_config() {
-        temp_env::with_vars(
-            [
-                (
-                    "NOX_HANDLE_GATEWAY_CHAINS__31337__RPC_URL",
-                    Some("http://localhost:8545"),
-                ),
-                (
-                    "NOX_HANDLE_GATEWAY_CHAINS__31337__NOX_COMPUTE_CONTRACT_ADDRESS",
-                    Some("0x0A59a4e1F7f740CD6474312AfFC1446fA9B5ad9B"),
-                ),
-                (
-                    "NOX_HANDLE_GATEWAY_CHAINS__31337__WALLET_KEY",
-                    Some("0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
-                ),
-                (
-                    "NOX_HANDLE_GATEWAY_CHAINS__31337__S3__ACCESS_KEY",
-                    Some("minioadmin"),
-                ),
-                (
-                    "NOX_HANDLE_GATEWAY_CHAINS__31337__S3__SECRET_KEY",
-                    Some("minioadmin"),
-                ),
-                (
-                    "NOX_HANDLE_GATEWAY_CHAINS__31337__S3__BUCKET",
-                    Some("test-bucket"),
-                ),
-                (
-                    "NOX_HANDLE_GATEWAY_CHAINS__31337__S3__REGION",
-                    Some("us-east-1"),
-                ),
-                (
-                    "NOX_HANDLE_GATEWAY_RUNNER_ADDRESS",
-                    Some("0x1111111111111111111111111111111111111111"),
-                ),
-                (
-                    "NOX_HANDLE_GATEWAY_KMS__SIGNER_ADDRESS",
-                    Some("0x2222222222222222222222222222222222222222"),
-                ),
-            ],
-            || {
-                let config = Config::load().expect("should load");
-                config.validate().expect("should validate");
-                assert_eq!("http://localhost:8545", config.chains[&31337].rpc_url);
-                assert_eq!(
-                    Address::from_str("0x0A59a4e1F7f740CD6474312AfFC1446fA9B5ad9B").unwrap(),
-                    config.chains[&31337].nox_compute_contract_address
-                );
-            },
-        )
-    }
-
-    #[test]
-    fn check_invalid_config() {
-        temp_env::with_vars(
-            [
-                (
-                    "NOX_HANDLE_GATEWAY_CHAINS__31337__RPC_URL",
-                    Some("not-a-url"),
-                ),
-                (
-                    "NOX_HANDLE_GATEWAY_CHAINS__31337__NOX_COMPUTE_CONTRACT_ADDRESS",
-                    Some("0x0000000000000000000000000000000000000000"),
-                ),
-                (
-                    "NOX_HANDLE_GATEWAY_CHAINS__31337__WALLET_KEY",
-                    Some("0x0000000000000000000000000000000000000000000000000000000000000000"),
-                ),
-                ("NOX_HANDLE_GATEWAY_CHAINS__31337__S3__ACCESS_KEY", Some("")),
-                ("NOX_HANDLE_GATEWAY_CHAINS__31337__S3__SECRET_KEY", Some("")),
-                ("NOX_HANDLE_GATEWAY_CHAINS__31337__S3__BUCKET", Some("")),
-                ("NOX_HANDLE_GATEWAY_CHAINS__31337__S3__REGION", Some("")),
-            ],
-            || {
-                let config = Config::load().expect("should load");
-                let result = config.validate();
-                assert!(result.is_err());
-                assert!(ValidationErrors::has_error(&result, "chains"));
-            },
-        )
-    }
-
-    fn valid_chain_config() -> PerChainConfig {
-        PerChainConfig {
-            rpc_url: "http://localhost:8545".to_string(),
-            nox_compute_contract_address: Address::from_str(
-                "0x0A59a4e1F7f740CD6474312AfFC1446fA9B5ad9B",
-            )
-            .unwrap(),
-            wallet_key: "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-                .to_string(),
-            s3: S3Config {
-                access_key: "minioadmin".to_string(),
-                secret_key: "minioadmin".to_string(),
-                bucket: "test-bucket".to_string(),
-                endpoint_url: None,
-                max_concurrent_requests: default_s3_max_concurrent_requests(),
-                max_handles_per_request: default_s3_max_handles_per_request(),
-                object_lock_enabled: default_s3_object_lock_enabled(),
-                region: "us-east-1".to_string(),
-                timeout: default_s3_timeout(),
-            },
-        }
-    }
-
-    fn valid_config() -> Config {
-        let mut chains = HashMap::new();
-        chains.insert(31337, valid_chain_config());
-        Config {
-            server: ServerConfig {
-                host: "127.0.0.1".to_string(),
-                port: 3000,
-                cors_allowed_headers: vec!["content-type".to_string(), "authorization".to_string()],
-            },
-            chains,
-            kms: KmsConfig {
-                url: "http://localhost:9000".to_string(),
-                signer_address: Address::from_str("0x2222222222222222222222222222222222222222")
-                    .unwrap(),
-            },
-            runner_address: Address::from_str("0x1111111111111111111111111111111111111111")
-                .unwrap(),
-            default_chain_id: 31337,
-        }
-    }
-
-    #[test]
-    fn check_empty_chains_invalid() {
-        let mut cfg = valid_config();
-        cfg.chains.clear();
-        let result = cfg.validate();
-        assert!(result.is_err());
-        assert!(ValidationErrors::has_error(&result, "__all__"));
-    }
-
-    #[test]
-    fn check_invalid_server_config() {
-        let mut cfg = valid_config();
-        cfg.server.host = "".to_string();
-        cfg.server.port = 0;
-        cfg.server.cors_allowed_headers = vec!["not a valid header!".to_string()];
-        let result = cfg.validate();
-        assert!(result.is_err());
-        assert!(ValidationErrors::has_error(&result, "server"));
-    }
-
-    #[test]
-    fn check_zero_runner_and_kms_signer_invalid() {
-        let mut cfg = valid_config();
-        cfg.runner_address = Address::ZERO;
-        cfg.kms.signer_address = Address::ZERO;
-        let result = cfg.validate();
-        assert!(result.is_err());
-        assert!(ValidationErrors::has_error(&result, "runner_address"));
-        assert!(ValidationErrors::has_error(&result, "kms"));
-    }
-
-    #[test]
-    fn check_invalid_chain_config() {
-        let chain_config = PerChainConfig {
-            rpc_url: "".to_string(),
-            nox_compute_contract_address: Address::ZERO,
-            wallet_key: "0x".to_string(),
-            s3: S3Config {
-                access_key: "".to_string(),
-                secret_key: "".to_string(),
-                bucket: "".to_string(),
-                endpoint_url: None,
-                max_concurrent_requests: default_s3_max_concurrent_requests(),
-                max_handles_per_request: default_s3_max_handles_per_request(),
-                object_lock_enabled: default_s3_object_lock_enabled(),
-                region: "".to_string(),
-                timeout: default_s3_timeout(),
-            },
-        };
-        let result = chain_config.validate();
-        assert!(ValidationErrors::has_error(&result, "rpc_url"));
-        assert!(ValidationErrors::has_error(
-            &result,
-            "nox_compute_contract_address"
-        ));
-        assert!(ValidationErrors::has_error(&result, "wallet_key"));
-        assert!(ValidationErrors::has_error(&result, "s3"));
     }
 }

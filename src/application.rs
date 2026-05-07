@@ -111,17 +111,8 @@ impl Application {
     /// 2. Build [`CryptoService`] with per-chain KMS public keys
     /// 3. Build [`KmsClient`] and validate S3 buckets
     /// 4. Bind the TCP listener and serve until `SIGTERM` / `Ctrl+C`
-    ///
-    /// CORS header names and presence of at least one chain are enforced by
-    /// [`Config`] validation in `main`, so this method assumes both are valid.
     pub async fn run(self) -> anyhow::Result<()> {
-        let cors_allowed_headers: Vec<HeaderName> = self
-            .config
-            .server
-            .cors_allowed_headers
-            .iter()
-            .map(|h| HeaderName::from_bytes(h.as_bytes()).expect("validated by Config::validate"))
-            .collect();
+        let cors_allowed_headers = self.config.server.cors_allowed_headers.clone();
 
         let mut nox_clients: HashMap<u32, NoxClient> = HashMap::new();
         let mut protocol_keys = HashMap::new();
