@@ -10,8 +10,14 @@ use validator::{Validate, ValidationError};
 
 /// Top-level application configuration loaded from environment variables.
 ///
-/// All fields are populated by [`Config::load`]. Most have sensible defaults;
-/// exceptions are noted on the individual sub-config types.
+/// Fields are populated by [`Config::load`]. Invariants beyond serde parsing
+/// (non-zero addresses, non-empty chains map, `default_chain_id` ∈ `chains`,
+/// per-chain wallet-key shape, S3 field presence) are enforced by
+/// [`Config::validate`] — `main` calls both before any I/O.
+///
+/// Required without defaults: `chains` (at least one entry), `runner_address`
+/// (non-zero), `kms.signer_address` (non-zero), and every `chains[*]`
+/// sub-field except S3 tuning knobs.
 #[derive(Debug, Clone, Deserialize, Validate)]
 #[validate(schema(function = "validate_non_empty_chains"))]
 #[validate(schema(function = "validate_default_chain_id"))]
@@ -25,6 +31,8 @@ pub struct Config {
     #[validate(custom(function = "validate_non_zero_address"))]
     pub runner_address: Address,
     /// Fallback chain ID when the SDK omits the `chain_id` query parameter.
+    /// Must match a key in [`Config::chains`] — checked by
+    /// [`validate_default_chain_id`] at startup.
     // TODO: Remove when SDK supports chain ID query param.
     pub default_chain_id: u32,
 }
@@ -70,9 +78,9 @@ pub struct PerChainConfig {
 
 /// S3/MinIO connection configuration.
 ///
-/// `access_key`, `secret_key`, and `region` have no defaults — the process
-/// exits at startup if they are not provided via environment variables or a
-/// config file.
+/// `access_key`, `secret_key`, `bucket`, and `region` have no defaults — the
+/// process exits at startup if they are not provided via environment
+/// variables or a config file.
 ///
 /// `endpoint_url` is optional. When absent the AWS SDK uses standard regional
 /// endpoints (native AWS S3). When set, the SDK targets that custom endpoint
@@ -109,6 +117,10 @@ pub struct S3Config {
 }
 
 /// KMS service configuration.
+///
+/// `url` defaults to `http://localhost:9000`. `signer_address` has no default
+/// and must be non-zero — it is the expected EIP-712 signer for KMS responses
+/// and is checked against on each delegate call.
 #[derive(Clone, Debug, Deserialize, Validate)]
 pub struct KmsConfig {
     #[validate(url)]
@@ -196,6 +208,13 @@ impl Config {
     /// Variables are prefixed `NOX_HANDLE_GATEWAY_` with `__` as the nested
     /// separator (e.g. `NOX_HANDLE_GATEWAY_CHAINS__421614__BUCKET`). Secret-file variants
     /// are also supported via `config_secret`.
+    ///
+    /// Loading only covers serde parsing — including
+    /// [`ServerConfig::cors_allowed_headers`] which is parsed into
+    /// [`HeaderName`] at deserialise time. Callers must invoke
+    /// [`Config::validate`] (auto-derived via the `validator` crate) before
+    /// using the result, to enforce non-zero addresses, wallet-key shape,
+    /// non-empty `chains`, and `default_chain_id ∈ chains`.
     pub fn load() -> Result<Self, ConfigError> {
         let config = ConfigBuilder::builder()
             .set_default("server.host", "127.0.0.1")?
