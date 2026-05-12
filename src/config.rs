@@ -59,7 +59,7 @@ pub struct ServerConfig {
     pub cors_allowed_headers: Vec<HeaderName>,
 }
 
-/// Per-chain configuration combining RPC, signing key, and S3/MinIO storage settings.
+/// Per-chain configuration combining RPC, signing key, and S3 storage settings.
 ///
 /// One entry per configured chain ID under `NOX_HANDLE_GATEWAY_CHAINS__{chain_id}__*`.
 /// Duplicating values across chains (e.g. the same `wallet_key`) is intentional —
@@ -76,7 +76,7 @@ pub struct PerChainConfig {
     pub wallet_key: String,
 }
 
-/// S3/MinIO connection configuration.
+/// S3 connection configuration.
 ///
 /// `access_key`, `secret_key`, `bucket`, and `region` have no defaults — the
 /// process exits at startup if they are not provided via environment
@@ -84,8 +84,7 @@ pub struct PerChainConfig {
 ///
 /// `endpoint_url` is optional. When absent the AWS SDK uses standard regional
 /// endpoints (native AWS S3). When set, the SDK targets that custom endpoint
-/// and enables path-style addressing (required for MinIO and other S3-compatible
-/// backends).
+/// and enables path-style addressing (required for S3-compatible backends).
 ///
 /// `object_lock_enabled` controls whether Object Lock Compliance headers are
 /// written on each stored handle and whether the startup bucket check verifies
