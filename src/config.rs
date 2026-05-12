@@ -1,22 +1,38 @@
 use std::collections::HashMap;
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, hex};
+use axum::http::HeaderName;
 use config::{Config as ConfigBuilder, ConfigError, Environment};
 use config_secret::EnvironmentSecretFile;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use tracing::debug;
+use validator::{Validate, ValidationError};
 
 /// Top-level application configuration loaded from environment variables.
 ///
-/// All fields are populated by [`Config::load`]. Most have sensible defaults;
-/// exceptions are noted on the individual sub-config types.
-#[derive(Debug, Clone, Deserialize)]
+/// Fields are populated by [`Config::load`]. Invariants beyond serde parsing
+/// (non-zero addresses, non-empty chains map, `default_chain_id` ∈ `chains`,
+/// per-chain wallet-key shape, S3 field presence) are enforced by
+/// [`Config::validate`] — `main` calls both before any I/O.
+///
+/// Required without defaults: `chains` (at least one entry), `runner_address`
+/// (non-zero), `kms.signer_address` (non-zero), and every `chains[*]`
+/// sub-field except S3 tuning knobs.
+#[derive(Debug, Clone, Deserialize, Validate)]
+#[validate(schema(function = "validate_non_empty_chains"))]
+#[validate(schema(function = "validate_default_chain_id"))]
 pub struct Config {
+    #[validate(nested)]
     pub server: ServerConfig,
+    #[validate(nested)]
     pub chains: HashMap<u32, PerChainConfig>,
+    #[validate(nested)]
     pub kms: KmsConfig,
+    #[validate(custom(function = "validate_non_zero_address"))]
     pub runner_address: Address,
     /// Fallback chain ID when the SDK omits the `chain_id` query parameter.
+    /// Must match a key in [`Config::chains`] — checked by
+    /// [`validate_default_chain_id`] at startup.
     // TODO: Remove when SDK supports chain ID query param.
     pub default_chain_id: u32,
 }
@@ -27,62 +43,89 @@ pub struct Config {
 /// send cross-origin (`Access-Control-Allow-Headers`). The default covers the
 /// two headers used by this API: `content-type` (JSON bodies) and `authorization`
 /// (EIP-712 token). Extend via `NOX_HANDLE_GATEWAY_SERVER__CORS_ALLOWED_HEADERS`
-/// as a JSON array.
+/// as a comma-separated list.
 ///
-/// Each entry is validated at startup with [`http::header::HeaderName::from_bytes`],
-/// which enforces HTTP token syntax (RFC 7230). Malformed values cause a hard
-/// error, but typos (e.g. `"authoriation"`) are valid tokens and will be
-/// accepted silently, causing CORS preflight rejections at runtime.
-#[derive(Debug, Clone, Deserialize)]
+/// Entries are parsed into [`HeaderName`] at deserialisation time, so malformed
+/// HTTP token syntax (RFC 7230) causes a hard error at startup. Typos that are
+/// valid tokens (e.g. `"authoriation"`) parse successfully and surface only as
+/// CORS preflight rejections at runtime.
+#[derive(Debug, Clone, Deserialize, Validate)]
 pub struct ServerConfig {
+    #[validate(length(min = 1))]
     pub host: String,
+    #[validate(range(min = 1))]
     pub port: u16,
-    pub cors_allowed_headers: Vec<String>,
+    #[serde(deserialize_with = "deserialize_header_names")]
+    pub cors_allowed_headers: Vec<HeaderName>,
 }
 
-/// Per-chain configuration combining RPC, signing key, and S3/MinIO storage settings.
+/// Per-chain configuration combining RPC, signing key, and S3 storage settings.
 ///
 /// One entry per configured chain ID under `NOX_HANDLE_GATEWAY_CHAINS__{chain_id}__*`.
 /// Duplicating values across chains (e.g. the same `wallet_key`) is intentional —
 /// it supports both single-key and per-chain-key deployments without special-casing.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Validate)]
 pub struct PerChainConfig {
+    #[validate(custom(function = "validate_non_zero_address"))]
     pub nox_compute_contract_address: Address,
+    #[validate(url)]
     pub rpc_url: String,
+    #[validate(nested)]
     pub s3: S3Config,
+    #[validate(custom(function = "validate_wallet_key"))]
     pub wallet_key: String,
 }
 
-/// S3/MinIO connection configuration.
+/// S3 connection configuration.
 ///
-/// `access_key`, `secret_key`, and `region` have no defaults — the process
-/// exits at startup if they are not provided via environment variables or a
-/// config file.
+/// `access_key`, `secret_key`, `bucket`, and `region` have no defaults — the
+/// process exits at startup if they are not provided via environment
+/// variables or a config file.
 ///
 /// `endpoint_url` is optional. When absent the AWS SDK uses standard regional
 /// endpoints (native AWS S3). When set, the SDK targets that custom endpoint
-/// and enables path-style addressing (required for MinIO and other S3-compatible
-/// backends).
+/// and enables path-style addressing (required for S3-compatible backends).
 ///
 /// `object_lock_enabled` controls whether Object Lock Compliance headers are
 /// written on each stored handle and whether the startup bucket check verifies
 /// that Object Lock is active. Set to `false` for buckets where Object Lock is
 /// not configured (e.g. the Sepolia S3 bucket).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Validate)]
 pub struct S3Config {
+    #[validate(length(min = 1))]
     pub access_key: String,
+    #[validate(length(min = 1))]
     pub secret_key: String,
+    #[validate(length(min = 1))]
     pub bucket: String,
+    #[validate(url)]
     pub endpoint_url: Option<String>,
     #[serde(default = "default_s3_max_concurrent_requests")]
+    #[validate(range(min = 1))]
     pub max_concurrent_requests: usize,
     #[serde(default = "default_s3_max_handles_per_request")]
+    #[validate(range(min = 1))]
     pub max_handles_per_request: usize,
     #[serde(default = "default_s3_object_lock_enabled")]
     pub object_lock_enabled: bool,
+    #[validate(length(min = 1))]
     pub region: String,
     #[serde(default = "default_s3_timeout")]
+    #[validate(range(min = 1))]
     pub timeout: u64,
+}
+
+/// KMS service configuration.
+///
+/// `url` defaults to `http://localhost:9000`. `signer_address` has no default
+/// and must be non-zero — it is the expected EIP-712 signer for KMS responses
+/// and is checked against on each delegate call.
+#[derive(Clone, Debug, Deserialize, Validate)]
+pub struct KmsConfig {
+    #[validate(url)]
+    pub url: String,
+    #[validate(custom(function = "validate_non_zero_address"))]
+    pub signer_address: Address,
 }
 
 /// Default S3 operation timeout in seconds.
@@ -105,11 +148,57 @@ fn default_s3_max_handles_per_request() -> usize {
     1000
 }
 
-/// KMS service configuration.
-#[derive(Clone, Debug, Deserialize)]
-pub struct KmsConfig {
-    pub url: String,
-    pub signer_address: Address,
+fn validate_non_empty_chains(cfg: &Config) -> Result<(), ValidationError> {
+    if cfg.chains.is_empty() {
+        return Err(ValidationError::new(
+            "at least one chain must be configured",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_default_chain_id(cfg: &Config) -> Result<(), ValidationError> {
+    if !cfg.chains.contains_key(&cfg.default_chain_id) {
+        return Err(ValidationError::new(
+            "default_chain_id must reference a configured chain",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_non_zero_address(address: &Address) -> Result<(), ValidationError> {
+    if *address == Address::ZERO {
+        return Err(ValidationError::new("address should not be zero address"));
+    }
+    Ok(())
+}
+
+fn validate_wallet_key(wallet_key: &str) -> Result<(), ValidationError> {
+    let bytes = hex::decode(wallet_key)
+        .map_err(|_| ValidationError::new("wallet key is not a valid hex"))?;
+    if bytes.len() != 32 {
+        return Err(ValidationError::new(
+            "wallet key should have a 32-byte length",
+        ));
+    }
+    if bytes == [0u8; 32] {
+        return Err(ValidationError::new("wallet key should not contain only 0"));
+    }
+    Ok(())
+}
+
+fn deserialize_header_names<'de, D>(deserializer: D) -> Result<Vec<HeaderName>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Vec::<String>::deserialize(deserializer)?;
+    raw.into_iter()
+        .map(|h| {
+            HeaderName::from_bytes(h.as_bytes()).map_err(|e| {
+                serde::de::Error::custom(format!("invalid HTTP header name '{h}': {e}"))
+            })
+        })
+        .collect()
 }
 
 impl Config {
@@ -118,6 +207,13 @@ impl Config {
     /// Variables are prefixed `NOX_HANDLE_GATEWAY_` with `__` as the nested
     /// separator (e.g. `NOX_HANDLE_GATEWAY_CHAINS__421614__BUCKET`). Secret-file variants
     /// are also supported via `config_secret`.
+    ///
+    /// Loading only covers serde parsing — including
+    /// [`ServerConfig::cors_allowed_headers`] which is parsed into
+    /// [`HeaderName`] at deserialise time. Callers must invoke
+    /// [`Config::validate`] (auto-derived via the `validator` crate) before
+    /// using the result, to enforce non-zero addresses, wallet-key shape,
+    /// non-empty `chains`, and `default_chain_id ∈ chains`.
     pub fn load() -> Result<Self, ConfigError> {
         let config = ConfigBuilder::builder()
             .set_default("server.host", "127.0.0.1")?
@@ -127,14 +223,6 @@ impl Config {
                 vec!["content-type", "authorization"],
             )?
             .set_default("kms.url", "http://localhost:9000")?
-            .set_default(
-                "kms.signer_address",
-                "0x0000000000000000000000000000000000000000",
-            )?
-            .set_default(
-                "runner_address",
-                "0x0000000000000000000000000000000000000000",
-            )?
             .set_default("default_chain_id", 421614)?
             .add_source(
                 Environment::with_prefix("NOX_HANDLE_GATEWAY")

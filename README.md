@@ -50,7 +50,7 @@ The Handle Gateway is the off-chain custody layer for encrypted values reference
 ## Prerequisites
 
 - Rust >= 1.85 (edition 2024)
-- An S3-compatible object store (AWS S3 or MinIO) with Object Lock enabled
+- An S3-compatible object store (AWS S3) with Object Lock enabled
 - Access to an Ethereum RPC endpoint
 - A running [nox-kms](https://github.com/iExec-Nox/nox-kms) instance
 
@@ -108,8 +108,8 @@ The Handle Gateway supports multiple chains simultaneously. Repeat the `CHAINS__
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__BUCKET` | S3 bucket name for this chain | **Yes** | — |
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__ACCESS_KEY` | S3 access key | **Yes** | — |
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__SECRET_KEY` | S3 secret key | **Yes** | — |
-| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__REGION` | S3 region (`eu-west-3` for AWS Paris; any string for MinIO) | **Yes** | — |
-| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__ENDPOINT_URL` | Custom S3/MinIO endpoint. Absent = AWS standard regional endpoints | No | *(none)* |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__REGION` | S3 region (`eu-west-3` for AWS Paris) | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__ENDPOINT_URL` | Custom S3 endpoint. Absent = AWS standard regional endpoints | No | *(none)* |
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__TIMEOUT` | S3 operation timeout (seconds) | No | `30` |
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__MAX_CONCURRENT_REQUESTS` | Max S3 requests in-flight concurrently | No | `100` |
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__MAX_HANDLES_PER_REQUEST` | Max handles accepted in a single `POST /v0/public/handles/status` batch | No | `1000` |

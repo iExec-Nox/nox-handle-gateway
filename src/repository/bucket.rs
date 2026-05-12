@@ -1,4 +1,4 @@
-//! S3/MinIO storage backend for encrypted handle entries.
+//! S3 storage backend for encrypted handle entries.
 //!
 //! Handles bucket validation at startup, atomic single-object writes via
 //! `If-None-Match: *`, and idempotent batch publishing with pre-flight conflict
@@ -128,7 +128,7 @@ pub struct PublishSummary {
     pub conflicted: usize,
 }
 
-/// S3/MinIO client wrapper for handle storage operations.
+/// S3 client wrapper for handle storage operations.
 #[derive(Clone)]
 pub struct BucketRepository {
     client: Client,
@@ -146,8 +146,8 @@ impl BucketRepository {
     /// mode because handles are immutable.
     ///
     /// When `endpoint_url` is set, the client targets that custom endpoint with
-    /// path-style addressing (MinIO / S3-compatible backends). When absent, the
-    /// AWS SDK uses standard regional endpoints (native AWS S3).
+    /// path-style addressing (S3-compatible backends). When absent, the AWS SDK
+    /// uses standard regional endpoints (native AWS S3).
     pub async fn new(config: &S3Config) -> anyhow::Result<Self> {
         let credentials =
             Credentials::new(&config.access_key, &config.secret_key, None, None, "static");

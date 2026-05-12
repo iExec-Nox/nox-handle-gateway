@@ -162,34 +162,20 @@ impl CryptoService {
 
     /// Loads an EIP-712 signer from a hex-encoded private key.
     ///
-    /// Accepts keys with or without `0x` prefix. Fails fast if the key is
-    /// missing, malformed, or not a valid secp256k1 scalar.
+    /// Format invariants (hex, 32 bytes, non-zero) are enforced upstream by
+    /// `Config::validate`; this only handles the secp256k1 scalar conversion.
     pub fn load_signer(wallet_key: &str) -> Result<PrivateKeySigner, Error> {
-        if wallet_key.is_empty() {
-            return Err(Error::SignerError(
-                "wallet_key must not be empty".to_string(),
-            ));
-        }
+        let bytes: [u8; 32] = hex::decode(wallet_key)
+            .map_err(|e| Error::SignerError(format!("wallet_key is not valid hex: {e}")))?
+            .try_into()
+            .map_err(|v: Vec<u8>| {
+                Error::SignerError(format!("wallet_key must be 32 bytes, got {}", v.len()))
+            })?;
 
-        let bytes = hex::decode(wallet_key)
-            .map_err(|e| Error::SignerError(format!("wallet_key is not valid hex: {e}")))?;
+        let signer = PrivateKeySigner::from_bytes(&bytes.into())
+            .map_err(|e| Error::SignerError(format!("invalid secp256k1 key: {e}")))?;
 
-        if bytes.len() != 32 {
-            return Err(Error::SignerError(format!(
-                "Invalid key length in SIGNER__WALLET_KEY: expected 32 bytes, got {}",
-                bytes.len()
-            )));
-        }
-
-        let mut bytes_array = [0u8; 32];
-        bytes_array.copy_from_slice(&bytes);
-        let signer = PrivateKeySigner::from_bytes(&bytes_array.into())
-            .map_err(|e| Error::SignerError(format!("Invalid key in SIGNER__WALLET_KEY: {e}")))?;
-
-        info!(
-            "Loaded signer from environment variable, address: {}",
-            signer.address()
-        );
+        info!("Loaded signer, address: {}", signer.address());
 
         Ok(signer)
     }
