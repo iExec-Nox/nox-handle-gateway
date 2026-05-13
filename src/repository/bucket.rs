@@ -148,7 +148,7 @@ impl BucketRepository {
     /// When `endpoint_url` is set, the client targets that custom endpoint with
     /// path-style addressing (S3-compatible backends). When absent, the AWS SDK
     /// uses standard regional endpoints (native AWS S3).
-    pub async fn new(config: &S3Config) -> anyhow::Result<Self> {
+    pub async fn new(config: &S3Config, semaphore: Arc<Semaphore>) -> anyhow::Result<Self> {
         let credentials =
             Credentials::new(&config.access_key, &config.secret_key, None, None, "static");
 
@@ -176,7 +176,7 @@ impl BucketRepository {
             client: Client::from_conf(s3_config),
             bucket: config.bucket.clone(),
             object_lock_enabled: config.object_lock_enabled,
-            semaphore: Arc::new(Semaphore::new(config.max_concurrent_requests)),
+            semaphore,
         };
 
         repo.validate_bucket().await?;
@@ -431,9 +431,10 @@ impl BucketRepository {
     /// - **200, same tag:** skips silently (`unchanged`).
     /// - **200, different tag:** logs at `error!` level (`conflicted`).
     ///
-    /// Always returns `Ok(PublishSummary)` for business-level outcomes. S3
-    /// infrastructure errors (network, permissions) and invalid handle bytes
-    /// propagate as `Err(S3Error::S3Operation)`.
+    /// Per-handle S3 calls are dispatched concurrently, throttled by the global
+    /// `s3_max_concurrent_requests` semaphore. Always returns `Ok(PublishSummary)`
+    /// for business-level outcomes. S3 infrastructure errors (network, permissions)
+    /// and invalid handle bytes propagate as `Err(S3Error::S3Operation)`.
     pub async fn create_handles(
         &self,
         entries: Vec<HandleEntryWithTag>,
@@ -516,8 +517,10 @@ impl BucketRepository {
 
     /// Fetches multiple handle entries by ID, silently skipping missing keys.
     ///
-    /// Missing handles are omitted from the result rather than producing an
-    /// error. Any other S3 error (network, permissions) is propagated immediately.
+    /// Dispatches GET requests for every key concurrently, throttled by the
+    /// global `s3_max_concurrent_requests` semaphore. Missing handles are
+    /// omitted from the result rather than producing an error. Any other S3
+    /// error (network, permissions) is propagated immediately.
     pub async fn read_handles(&self, ids: &[String]) -> Result<Vec<HandleEntry>, S3Error> {
         let mut results = Vec::with_capacity(ids.len());
         let repo = self.clone();
@@ -551,7 +554,7 @@ impl BucketRepository {
     /// Returns the resolution status of each id in `ids`.
     ///
     /// Dispatches HEAD requests for every key concurrently, throttled by the
-    /// bucket's `max_concurrent_requests` semaphore. Any S3 error other than
+    /// global `s3_max_concurrent_requests` semaphore. Any S3 error other than
     /// 404 is propagated immediately.
     pub async fn handles_exist(&self, ids: &[String]) -> Result<HashMap<String, bool>, S3Error> {
         let results = join_all(ids.iter().map(|id| {

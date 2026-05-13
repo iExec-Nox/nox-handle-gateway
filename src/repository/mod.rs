@@ -12,8 +12,10 @@ use bucket::BucketRepository;
 pub use bucket::{HandleEntry, HandleS3Metadata, PublishSummary, S3Error, S3HandleCreationStatus};
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use futures_util::future::try_join_all;
+use tokio::sync::Semaphore;
 
 use crate::config::PerChainConfig;
 use crate::handlers::HandleEntryWithTag;
@@ -28,13 +30,22 @@ pub struct DataRepository {
 
 impl DataRepository {
     /// Builds one [`BucketRepository`] per configured chain ID, validating all
-    /// buckets concurrently at startup. Fails if any bucket is unreachable or
+    /// buckets concurrently at startup. A single `Arc<Semaphore>` sized from
+    /// `s3_max_concurrent_requests` is shared across every repository, capping
+    /// in-flight S3 operations globally. Fails if any bucket is unreachable or
     /// has a mismatched Object Lock state.
-    pub async fn new(configs: &HashMap<u32, PerChainConfig>) -> anyhow::Result<Self> {
-        let repos = try_join_all(configs.iter().map(|(&chain_id, cfg)| async move {
-            BucketRepository::new(&cfg.s3)
-                .await
-                .map(|repo| (chain_id, repo))
+    pub async fn new(
+        configs: &HashMap<u32, PerChainConfig>,
+        s3_max_concurrent_requests: usize,
+    ) -> anyhow::Result<Self> {
+        let s3_semaphore = Arc::new(Semaphore::new(s3_max_concurrent_requests));
+        let repos = try_join_all(configs.iter().map(|(&chain_id, cfg)| {
+            let sem = Arc::clone(&s3_semaphore);
+            async move {
+                BucketRepository::new(&cfg.s3, sem)
+                    .await
+                    .map(|repo| (chain_id, repo))
+            }
         }))
         .await?
         .into_iter()
