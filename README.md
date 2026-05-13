@@ -98,6 +98,7 @@ The Handle Gateway supports multiple chains simultaneously. Repeat the `CHAINS__
 | `NOX_HANDLE_GATEWAY_KMS__SIGNER_ADDRESS` | Expected KMS signer address | **Yes** | — |
 | `NOX_HANDLE_GATEWAY_RUNNER_ADDRESS` | Ethereum address of the authorised runner | **Yes** | — |
 | `NOX_HANDLE_GATEWAY_S3_MAX_CONCURRENT_REQUESTS` | Global cap on in-flight S3 operations across all chains (single shared semaphore) | No | `500` |
+| `NOX_HANDLE_GATEWAY_S3_MAX_HANDLES_PER_REQUEST` | Max handles accepted in a single `POST /v0/public/handles/status` batch (DoS guard) | No | `1000` |
 
 ### Per-chain variables (`CHAINS__<CHAIN_ID>__*`)
 
@@ -112,7 +113,6 @@ The Handle Gateway supports multiple chains simultaneously. Repeat the `CHAINS__
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__REGION` | S3 region (`eu-west-3` for AWS Paris) | **Yes** | — |
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__ENDPOINT_URL` | Custom S3 endpoint. Absent = AWS standard regional endpoints | No | *(none)* |
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__TIMEOUT` | S3 operation timeout (seconds) | No | `30` |
-| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__MAX_HANDLES_PER_REQUEST` | Max handles accepted in a single `POST /v0/public/handles/status` batch | No | `1000` |
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__S3__OBJECT_LOCK_ENABLED` | Set `false` for buckets without Object Lock (e.g. Sepolia) | No | `true` |
 
 For sensitive values, you can use the `_FILE` suffix to load from a file:

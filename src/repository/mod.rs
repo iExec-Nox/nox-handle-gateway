@@ -30,13 +30,15 @@ pub struct DataRepository {
 
 impl DataRepository {
     /// Builds one [`BucketRepository`] per configured chain ID, validating all
-    /// buckets concurrently at startup. Every repository receives a clone of
-    /// the shared `s3_semaphore` `Arc`. Fails if any bucket is unreachable or
+    /// buckets concurrently at startup. A single `Arc<Semaphore>` sized from
+    /// `s3_max_concurrent_requests` is shared across every repository, capping
+    /// in-flight S3 operations globally. Fails if any bucket is unreachable or
     /// has a mismatched Object Lock state.
     pub async fn new(
         configs: &HashMap<u32, PerChainConfig>,
-        s3_semaphore: Arc<Semaphore>,
+        s3_max_concurrent_requests: usize,
     ) -> anyhow::Result<Self> {
+        let s3_semaphore = Arc::new(Semaphore::new(s3_max_concurrent_requests));
         let repos = try_join_all(configs.iter().map(|(&chain_id, cfg)| {
             let sem = Arc::clone(&s3_semaphore);
             async move {

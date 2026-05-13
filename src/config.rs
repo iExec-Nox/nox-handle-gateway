@@ -38,6 +38,9 @@ pub struct Config {
     #[serde(default = "default_s3_max_concurrent_requests")]
     #[validate(range(min = 1, max = 1_000))]
     pub s3_max_concurrent_requests: usize,
+    #[serde(default = "default_s3_max_handles_per_request")]
+    #[validate(range(min = 1))]
+    pub s3_max_handles_per_request: usize,
 }
 
 /// HTTP server bind configuration.
@@ -103,9 +106,6 @@ pub struct S3Config {
     pub bucket: String,
     #[validate(url)]
     pub endpoint_url: Option<String>,
-    #[serde(default = "default_s3_max_handles_per_request")]
-    #[validate(range(min = 1))]
-    pub max_handles_per_request: usize,
     #[serde(default = "default_s3_object_lock_enabled")]
     pub object_lock_enabled: bool,
     #[validate(length(min = 1))]
