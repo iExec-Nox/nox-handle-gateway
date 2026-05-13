@@ -12,9 +12,9 @@ use axum::{
 };
 use axum_prometheus::{
     Handle, MakeDefaultHandle, PrometheusMetricLayer, PrometheusMetricLayerBuilder,
+    metrics_exporter_prometheus::PrometheusHandle,
 };
 use chrono::Utc;
-use metrics_exporter_prometheus::PrometheusHandle;
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, signal};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
