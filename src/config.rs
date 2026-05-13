@@ -35,6 +35,9 @@ pub struct Config {
     /// [`validate_default_chain_id`] at startup.
     // TODO: Remove when SDK supports chain ID query param.
     pub default_chain_id: u32,
+    #[serde(default = "default_s3_max_concurrent_requests")]
+    #[validate(range(min = 1, max = 1_000))]
+    pub s3_max_concurrent_requests: usize,
 }
 
 /// HTTP server bind configuration.
@@ -100,9 +103,6 @@ pub struct S3Config {
     pub bucket: String,
     #[validate(url)]
     pub endpoint_url: Option<String>,
-    #[serde(default = "default_s3_max_concurrent_requests")]
-    #[validate(range(min = 1))]
-    pub max_concurrent_requests: usize,
     #[serde(default = "default_s3_max_handles_per_request")]
     #[validate(range(min = 1))]
     pub max_handles_per_request: usize,
@@ -138,9 +138,9 @@ fn default_s3_object_lock_enabled() -> bool {
     true
 }
 
-/// Default maximum number of concurrent in-flight S3 requests.
+/// Default global cap on concurrent in-flight S3 requests across all chains.
 fn default_s3_max_concurrent_requests() -> usize {
-    100
+    500
 }
 
 /// Default maximum number of handles accepted in a single status request.

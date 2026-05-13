@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use alloy_primitives::hex;
 use alloy_signer_local::PrivateKeySigner;
@@ -16,7 +17,7 @@ use axum_prometheus::{
 use chrono::Utc;
 use metrics_exporter_prometheus::PrometheusHandle;
 use serde_json::{Value, json};
-use tokio::{net::TcpListener, signal};
+use tokio::{net::TcpListener, signal, sync::Semaphore};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{debug, info, warn};
 
@@ -167,7 +168,8 @@ impl Application {
         let crypto_svc = CryptoService::new(protocol_keys)?;
         let kms_client =
             KmsClient::new(self.config.kms.url.clone(), self.config.kms.signer_address)?;
-        let repository = DataRepository::new(&self.config.chains).await?;
+        let s3_semaphore = Arc::new(Semaphore::new(self.config.s3_max_concurrent_requests));
+        let repository = DataRepository::new(&self.config.chains, s3_semaphore).await?;
 
         let prometheus_layer = PrometheusMetricLayerBuilder::new()
             .with_allow_patterns(&["/", "/health", "/metrics", VERSIONED_PATHS])
