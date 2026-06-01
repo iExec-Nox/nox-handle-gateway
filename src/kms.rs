@@ -1,7 +1,8 @@
-use alloy_primitives::{Address, B256, hex};
-use alloy_signer::{Signature, SignerSync};
-use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{SolStruct, eip712_domain};
+use alloy::{
+    primitives::{Address, B256, hex},
+    signers::{Signature, SignerSync, local::PrivateKeySigner},
+    sol_types::{SolStruct, eip712_domain},
+};
 use k256::elliptic_curve::rand_core::{OsRng, RngCore};
 use reqwest::{Client, header::AUTHORIZATION};
 use serde::{Deserialize, Serialize};

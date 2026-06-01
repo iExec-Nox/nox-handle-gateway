@@ -4,8 +4,7 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
     aead::{Aead, KeyInit, generic_array::GenericArray},
 };
-use alloy_primitives::hex;
-use alloy_signer_local::PrivateKeySigner;
+use alloy::{primitives::hex, signers::local::PrivateKeySigner};
 use hkdf::Hkdf;
 use k256::{
     PublicKey,

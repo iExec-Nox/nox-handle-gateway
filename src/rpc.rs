@@ -1,6 +1,8 @@
-use alloy_primitives::{Address, B256, Bytes, FixedBytes};
-use alloy_provider::RootProvider;
-use alloy_sol_types::sol;
+use alloy::{
+    primitives::{Address, B256, Bytes, FixedBytes},
+    providers::RootProvider,
+    sol,
+};
 use k256::PublicKey;
 use thiserror::Error;
 
@@ -28,7 +30,7 @@ pub enum RpcError {
     #[error("Access denied: not a viewer")]
     AccessDenied,
     #[error(transparent)]
-    CallFailure(alloy_contract::Error),
+    CallFailure(alloy::contract::Error),
     #[error("Invalid KMS public key: {0}")]
     InvalidKey(String),
     #[error("ERC-1271: invalid signature (returned {0})")]
@@ -36,7 +38,7 @@ pub enum RpcError {
     #[error("RPC provider error: {0}")]
     ProviderError(String),
     #[error(transparent)]
-    SmartWalletSignatureNotVerified(alloy_contract::Error),
+    SmartWalletSignatureNotVerified(alloy::contract::Error),
 }
 
 /// Ethereum RPC client for on-chain reads against the NoxCompute contract.

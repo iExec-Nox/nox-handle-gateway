@@ -6,12 +6,7 @@ license = "BUSL-1.1"
 
 [dependencies]
 aes-gcm = "0.10.3"
-alloy-contract = "1.8.3"
-alloy-primitives = { version = "1.5.7", features = ["serde"] }
-alloy-provider = "1.8.3"
-alloy-signer = { version = "1.8.3", features = ["eip712"] }
-alloy-signer-local = "1.8.3"
-alloy-sol-types = "1.5.7"
+alloy = { version = "2.0.5", features = ["eip712"] }
 anyhow = "1.0.102"
 aws-config = "1.8.16"
 aws-sdk-s3 = "1.132.0"
