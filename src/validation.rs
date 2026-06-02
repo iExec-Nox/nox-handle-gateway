@@ -1,4 +1,4 @@
-use alloy_primitives::{B256, hex};
+use alloy::primitives::{B256, hex};
 
 use crate::error::AppError;
 use crate::types::SolidityType;

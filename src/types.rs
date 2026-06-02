@@ -1,8 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use alloy_primitives::hex;
-use alloy_sol_types::sol;
+use alloy::{primitives::hex, sol};
 use k256::elliptic_curve::rand_core::{OsRng, RngCore};
 use serde::Deserialize;
 

@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
-use alloy_primitives::hex;
-use alloy_signer_local::PrivateKeySigner;
+use alloy::{primitives::hex, signers::local::PrivateKeySigner};
 use anyhow::anyhow;
 use axum::{
     Json, Router,

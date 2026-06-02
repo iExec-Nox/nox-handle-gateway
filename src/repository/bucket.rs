@@ -9,7 +9,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use alloy_primitives::hex;
+use alloy::primitives::hex;
 use aws_sdk_s3::{
     Client,
     config::{Builder, Credentials, timeout::TimeoutConfig},

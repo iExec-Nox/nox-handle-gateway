@@ -3,10 +3,12 @@
 //! The handlers implement interactions for users or runners.
 //! User interactions, specifically the access to encrypted data
 //! held by a handle are verified against on-chain ACL.
-use alloy_primitives::{Address, B256, Bytes, U256, hex, keccak256};
-use alloy_signer::{Signature, SignerSync};
-use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{Eip712Domain, SolStruct, eip712_domain, sol};
+use alloy::{
+    primitives::{Address, B256, Bytes, U256, hex, keccak256},
+    signers::{Signature, SignerSync, local::PrivateKeySigner},
+    sol,
+    sol_types::{Eip712Domain, SolStruct, eip712_domain},
+};
 use axum::{
     Json,
     extract::{Path, Query, State},
