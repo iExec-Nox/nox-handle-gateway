@@ -70,12 +70,7 @@ impl AppError {
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             AppError::OperandsNotPrepared => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::RpcError(e) => match e {
-                rpc::RpcError::AccessDenied => StatusCode::FORBIDDEN,
-                rpc::RpcError::InvalidSignature(_)
-                | rpc::RpcError::SmartWalletSignatureNotVerified(_) => StatusCode::UNAUTHORIZED,
-                _ => StatusCode::SERVICE_UNAVAILABLE,
-            },
+            AppError::RpcError(_) => StatusCode::SERVICE_UNAVAILABLE,
             AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::StorageError(e) => match e {
                 repository::S3Error::AlreadyExists { .. } => StatusCode::CONFLICT,

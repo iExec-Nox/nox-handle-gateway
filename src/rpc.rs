@@ -27,18 +27,12 @@ sol! {
 /// Errors returned by [`NoxClient`] operations.
 #[derive(Debug, Error)]
 pub enum RpcError {
-    #[error("Access denied: not a viewer")]
-    AccessDenied,
     #[error(transparent)]
     CallFailure(alloy::contract::Error),
     #[error("Invalid KMS public key: {0}")]
     InvalidKey(String),
-    #[error("ERC-1271: invalid signature (returned {0})")]
-    InvalidSignature(FixedBytes<4>),
     #[error("RPC provider error: {0}")]
     ProviderError(String),
-    #[error(transparent)]
-    SmartWalletSignatureNotVerified(alloy::contract::Error),
 }
 
 /// Ethereum RPC client for on-chain reads against the NoxCompute contract.
@@ -96,60 +90,48 @@ impl NoxClient {
     /// Verify that `viewer` has read access to `handle` on-chain.
     ///
     /// Calls `isViewer(handle, viewer)` on the NoxCompute contract. Returns
-    /// `Ok(())` when access is granted, [`RpcError::AccessDenied`] when it is
-    /// not. Returns [`RpcError::CallFailure`] if the RPC node is unreachable or
+    /// `Ok(true)` when access is granted, `Ok(false)` when it is not. Returns [`RpcError::CallFailure`] if the RPC node is unreachable or
     /// the call fails for any transport reason.
-    pub async fn check_access(&self, handle: B256, viewer: Address) -> Result<(), RpcError> {
+    pub async fn check_access(&self, handle: B256, viewer: Address) -> Result<bool, RpcError> {
         let is_viewer = self
             .contract
             .isViewer(handle, viewer)
             .call()
             .await
             .map_err(RpcError::CallFailure)?;
-        if is_viewer {
-            Ok(())
-        } else {
-            Err(RpcError::AccessDenied)
-        }
+        Ok(is_viewer)
     }
 
     /// Verify that `handle` is marked as publicly decryptable on-chain.
     ///
     /// Calls `isPubliclyDecryptable(handle)` on the NoxCompute contract. Returns
-    /// `Ok(())` when the handle is publicly decryptable, [`RpcError::AccessDenied`]
-    /// when it is not. Returns [`RpcError::CallFailure`] if the RPC node is
-    /// unreachable or the call fails for any transport reason.
-    pub async fn is_publicly_decryptable(&self, handle: B256) -> Result<(), RpcError> {
+    /// `Ok(true)` when the handle is publicly decryptable, `Ok(false)` when it is not.
+    /// Returns [`RpcError::CallFailure`] if the RPC node is unreachable or the call fails for any transport reason.
+    pub async fn is_publicly_decryptable(&self, handle: B256) -> Result<bool, RpcError> {
         let is_public = self
             .contract
             .isPubliclyDecryptable(handle)
             .call()
             .await
             .map_err(RpcError::CallFailure)?;
-        if is_public {
-            Ok(())
-        } else {
-            Err(RpcError::AccessDenied)
-        }
+        Ok(is_public)
     }
 
     /// Verify an ERC-1271 signature against a Smart Account contract at `address`.
     ///
     /// Calls `isValidSignature(hash, signature)` on the contract deployed at
-    /// `address`. Returns `Ok(())` if the contract returns the ERC-1271 magic
-    /// value (`0x1626ba7e`). Returns [`RpcError::InvalidSignature`] if the
-    /// contract returns any other value. Returns
-    /// [`RpcError::SmartWalletSignatureNotVerified`] if the call itself fails
+    /// `address`. Returns `Ok(true)` if the contract returns the ERC-1271 magic
+    /// value (`0x1626ba7e`). Returns `Ok(false)` if the contract returns any other value. Returns
+    /// [`RpcError::CallFailure`] if the call itself fails
     /// for any reason (transport error, revert, ABI mismatch, contract not
     /// deployed, …), forwarding the raw alloy error transparently so no
-    /// information is lost. This catch-all is intentional — error patterns will
-    /// be refined into dedicated variants once observed in production.
+    /// information is lost.
     pub async fn verify_erc1271(
         &self,
         hash: B256,
         signature: &[u8],
         address: Address,
-    ) -> Result<(), RpcError> {
+    ) -> Result<bool, RpcError> {
         const MAGIC_VALUE: FixedBytes<4> = FixedBytes([0x16, 0x26, 0xba, 0x7e]);
 
         let provider = self.contract.provider().clone();
@@ -159,12 +141,12 @@ impl NoxClient {
             .isValidSignature(hash, Bytes::from(signature.to_vec()))
             .call()
             .await
-            .map_err(RpcError::SmartWalletSignatureNotVerified)?;
+            .map_err(RpcError::CallFailure)?;
 
         if result == MAGIC_VALUE {
-            Ok(())
+            Ok(true)
         } else {
-            Err(RpcError::InvalidSignature(result))
+            Ok(false)
         }
     }
 }
