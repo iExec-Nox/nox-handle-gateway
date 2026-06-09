@@ -93,14 +93,12 @@ impl PerChainConfig {
     /// `Config::validate`; this only handles the secp256k1 scalar conversion.
     pub fn load_signer(&self) -> anyhow::Result<PrivateKeySigner> {
         let bytes: [u8; 32] = hex::decode(&self.wallet_key)
-            .map_err(|e| anyhow!(format!("wallet_key is not valid hex: {e}")))?
+            .map_err(|e| anyhow!("wallet_key is not valid hex: {e}"))?
             .try_into()
-            .map_err(|v: Vec<u8>| {
-                anyhow!(format!("wallet_key must be 32 bytes, got {}", v.len()))
-            })?;
+            .map_err(|v: Vec<u8>| anyhow!("wallet_key must be 32 bytes, got {}", v.len()))?;
 
         let signer = PrivateKeySigner::from_bytes(&bytes.into())
-            .map_err(|e| anyhow!(format!("invalid secp256k1 key: {e}")))?;
+            .map_err(|e| anyhow!("invalid secp256k1 key: {e}"))?;
 
         info!("Loaded signer, address: {}", signer.address());
 
