@@ -1,11 +1,15 @@
 use std::collections::HashMap;
 
-use alloy::primitives::{Address, hex};
+use alloy::{
+    primitives::{Address, hex},
+    signers::local::PrivateKeySigner,
+};
+use anyhow::anyhow;
 use axum::http::HeaderName;
 use config::{Config as ConfigBuilder, ConfigError, Environment};
 use config_secret::EnvironmentSecretFile;
 use serde::{Deserialize, Deserializer};
-use tracing::debug;
+use tracing::{debug, info};
 use validator::{Validate, ValidationError};
 
 /// Top-level application configuration loaded from environment variables.
@@ -80,6 +84,28 @@ pub struct PerChainConfig {
     pub s3: S3Config,
     #[validate(custom(function = "validate_wallet_key"))]
     pub wallet_key: String,
+}
+
+impl PerChainConfig {
+    /// Loads an EIP-712 signer from a hex-encoded private key.
+    ///
+    /// Format invariants (hex, 32 bytes, non-zero) are enforced upstream by
+    /// `Config::validate`; this only handles the secp256k1 scalar conversion.
+    pub fn load_signer(&self) -> anyhow::Result<PrivateKeySigner> {
+        let bytes: [u8; 32] = hex::decode(&self.wallet_key)
+            .map_err(|e| anyhow!(format!("wallet_key is not valid hex: {e}")))?
+            .try_into()
+            .map_err(|v: Vec<u8>| {
+                anyhow!(format!("wallet_key must be 32 bytes, got {}", v.len()))
+            })?;
+
+        let signer = PrivateKeySigner::from_bytes(&bytes.into())
+            .map_err(|e| anyhow!(format!("invalid secp256k1 key: {e}")))?;
+
+        info!("Loaded signer, address: {}", signer.address());
+
+        Ok(signer)
+    }
 }
 
 /// S3 connection configuration.
