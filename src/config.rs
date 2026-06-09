@@ -24,7 +24,6 @@ use validator::{Validate, ValidationError};
 /// sub-field except S3 tuning knobs.
 #[derive(Debug, Clone, Deserialize, Validate)]
 #[validate(schema(function = "validate_non_empty_chains"))]
-#[validate(schema(function = "validate_default_chain_id"))]
 pub struct Config {
     #[validate(nested)]
     pub server: ServerConfig,
@@ -34,11 +33,6 @@ pub struct Config {
     pub kms: KmsConfig,
     #[validate(custom(function = "validate_non_zero_address"))]
     pub runner_address: Address,
-    /// Fallback chain ID when the SDK omits the `chain_id` query parameter.
-    /// Must match a key in [`Config::chains`] — checked by
-    /// [`validate_default_chain_id`] at startup.
-    // TODO: Remove when SDK supports chain ID query param.
-    pub default_chain_id: u32,
     #[serde(default = "default_s3_max_concurrent_requests")]
     #[validate(range(min = 1, max = 1_000))]
     pub s3_max_concurrent_requests: usize,
@@ -176,15 +170,6 @@ fn validate_non_empty_chains(cfg: &Config) -> Result<(), ValidationError> {
     if cfg.chains.is_empty() {
         return Err(ValidationError::new(
             "at least one chain must be configured",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_default_chain_id(cfg: &Config) -> Result<(), ValidationError> {
-    if !cfg.chains.contains_key(&cfg.default_chain_id) {
-        return Err(ValidationError::new(
-            "default_chain_id must reference a configured chain",
         ));
     }
     Ok(())

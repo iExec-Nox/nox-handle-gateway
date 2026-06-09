@@ -116,14 +116,11 @@ pub async fn create_handle(
     Json(request): Json<HandleRequest>,
 ) -> Result<Json<HandleResponse>, AppError> {
     let chain_id = match query_params.chain_id {
-        Some(requested) => requested,
+        Some(chain_id) => chain_id,
         None => {
-            let fallback = state.config.default_chain_id;
-            warn!(
-                chain_id = fallback,
-                "chain_id absent from request, falling back to default configured chain"
-            );
-            fallback
+            return Err(AppError::BadRequest(
+                "Mandatory chain_id query param not provided".to_string(),
+            ));
         }
     };
     if !state.verify_chain(chain_id) {
