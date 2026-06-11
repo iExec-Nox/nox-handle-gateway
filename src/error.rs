@@ -13,6 +13,8 @@ use crate::rpc;
 
 #[derive(Debug, Error)]
 pub enum AppError {
+    #[error("Access denied: {0}")]
+    AccessDenied(String),
     #[error("Bad request: {0}")]
     BadRequest(String),
     #[error("Batch too large: received {received}, limit {limit}")]
@@ -42,6 +44,7 @@ pub enum AppError {
 impl AppError {
     fn error_code(&self) -> &'static str {
         match self {
+            AppError::AccessDenied(_) => "access_denied",
             AppError::BadRequest(_) => "bad_request",
             AppError::BatchTooLarge { .. } => "batch_too_large",
             AppError::CryptoError(_) => "crypto",
@@ -59,6 +62,7 @@ impl AppError {
 
     fn status_code(&self) -> StatusCode {
         match self {
+            AppError::AccessDenied(_) => StatusCode::FORBIDDEN,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::BatchTooLarge { .. } => StatusCode::BAD_REQUEST,
             AppError::CryptoError(_) => StatusCode::INTERNAL_SERVER_ERROR,

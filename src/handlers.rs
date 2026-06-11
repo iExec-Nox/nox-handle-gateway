@@ -351,9 +351,7 @@ pub async fn get_handle_crypto_material(
         .check_access(handle_b256, payload.userAddress)
         .await?;
     if !has_access {
-        return Err(AppError::Unauthorized(
-            "Access denied: not a viewer".to_string(),
-        ));
+        return Err(AppError::AccessDenied("not a viewer".to_string()));
     }
 
     let entry = state.repository.fetch_handle(&handle).await?;
@@ -415,8 +413,8 @@ pub async fn public_decrypt(
         .is_publicly_decryptable(handle_b256)
         .await?;
     if !is_public {
-        return Err(AppError::Unauthorized(
-            "Access denied: not publicly decryptable".to_string(),
+        return Err(AppError::AccessDenied(
+            "not publicly decryptable".to_string(),
         ));
     }
 
