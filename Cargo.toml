@@ -18,6 +18,7 @@ config = "0.15.22"
 config-secret = "0.1.0"
 futures-util = "0.3.32"
 hkdf = "0.12.4"
+humantime-serde = "1.1.1"
 k256 = { version = "0.13.4", features = ["ecdh"] }
 reqwest = { version = "0.13.3", features = ["json", "query"] }
 rsa = "0.9.10"

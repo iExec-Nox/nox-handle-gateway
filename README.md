@@ -95,6 +95,8 @@ The Handle Gateway supports multiple chains simultaneously. Repeat the `CHAINS__
 | `NOX_HANDLE_GATEWAY_SERVER__CORS_ALLOWED_HEADERS` | Comma-separated list of allowed CORS request headers | No | `content-type,authorization` |
 | `NOX_HANDLE_GATEWAY_DEFAULT_CHAIN_ID` | Fallback chain ID used when `POST /v0/secrets` omits `chain_id` | No | `421614` |
 | `NOX_HANDLE_GATEWAY_KMS__URL` | KMS endpoint | No | `http://localhost:9000` |
+| `NOX_HANDLE_GATEWAY_KMS__CONNECT_TIMEOUT` | Timeout for the connect phase against the KMS | No | `3s` |
+| `NOX_HANDLE_GATEWAY_KMS__TIMEOUT` | Total request timeout against the KMS | No | `10s` |
 | `NOX_HANDLE_GATEWAY_KMS__SIGNER_ADDRESS` | Expected KMS signer address | **Yes** | — |
 | `NOX_HANDLE_GATEWAY_RUNNER_ADDRESS` | Ethereum address of the authorised runner | **Yes** | — |
 | `NOX_HANDLE_GATEWAY_S3_MAX_CONCURRENT_REQUESTS` | Global cap on in-flight S3 operations across all chains (single shared semaphore) | No | `500` |
