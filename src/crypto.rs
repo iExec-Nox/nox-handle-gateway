@@ -4,7 +4,7 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
     aead::{Aead, KeyInit, generic_array::GenericArray},
 };
-use alloy::{primitives::hex, signers::local::PrivateKeySigner};
+use alloy::primitives::hex;
 use hkdf::Hkdf;
 use k256::{
     PublicKey,
@@ -38,8 +38,6 @@ pub enum Error {
     UnknownChain(u32),
     #[error("RSA key generation error: {0}")]
     RsaKeyGenError(String),
-    #[error("Signer error: {0}")]
-    SignerError(String),
 }
 
 /// Result of ECIES encryption
@@ -157,26 +155,6 @@ impl CryptoService {
         cipher
             .decrypt(Nonce::from_slice(&nonce_bytes), ciphertext_bytes.as_slice())
             .map_err(|e| Error::AesGcmError(e.to_string()))
-    }
-
-    /// Loads an EIP-712 signer from a hex-encoded private key.
-    ///
-    /// Format invariants (hex, 32 bytes, non-zero) are enforced upstream by
-    /// `Config::validate`; this only handles the secp256k1 scalar conversion.
-    pub fn load_signer(wallet_key: &str) -> Result<PrivateKeySigner, Error> {
-        let bytes: [u8; 32] = hex::decode(wallet_key)
-            .map_err(|e| Error::SignerError(format!("wallet_key is not valid hex: {e}")))?
-            .try_into()
-            .map_err(|v: Vec<u8>| {
-                Error::SignerError(format!("wallet_key must be 32 bytes, got {}", v.len()))
-            })?;
-
-        let signer = PrivateKeySigner::from_bytes(&bytes.into())
-            .map_err(|e| Error::SignerError(format!("invalid secp256k1 key: {e}")))?;
-
-        info!("Loaded signer, address: {}", signer.address());
-
-        Ok(signer)
     }
 
     /// Encode an EC public key as compressed SEC1 format (33 bytes).

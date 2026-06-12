@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use alloy::{primitives::hex, signers::local::PrivateKeySigner};
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use axum::{
     Json, Router,
     extract::State,
@@ -125,8 +125,9 @@ impl Application {
 
             let kms_public_key = nox_client.kms_public_key().await?;
 
-            let signer = CryptoService::load_signer(&chain_cfg.wallet_key)
-                .map_err(|e| anyhow!("chain {chain_id}: {e}"))?;
+            let signer = chain_cfg
+                .load_signer()
+                .with_context(|| format!("chain {chain_id}"))?;
 
             let onchain_gateway = nox_client.gateway_address().await?;
 
