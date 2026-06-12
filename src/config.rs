@@ -1,4 +1,6 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::time::Duration;
 
 use alloy::{
     primitives::{Address, hex},
@@ -148,6 +150,12 @@ pub struct S3Config {
 pub struct KmsConfig {
     #[validate(url)]
     pub url: String,
+    #[serde(with = "humantime_serde")]
+    #[validate(custom(function = "validate_timeout"))]
+    pub connect_timeout: Duration,
+    #[serde(with = "humantime_serde")]
+    #[validate(custom(function = "validate_timeout"))]
+    pub timeout: Duration,
     #[validate(custom(function = "validate_non_zero_address"))]
     pub signer_address: Address,
 }
@@ -193,6 +201,20 @@ fn validate_default_chain_id(cfg: &Config) -> Result<(), ValidationError> {
 fn validate_non_zero_address(address: &Address) -> Result<(), ValidationError> {
     if *address == Address::ZERO {
         return Err(ValidationError::new("address should not be zero address"));
+    }
+    Ok(())
+}
+
+fn validate_timeout(value: &Duration) -> Result<(), ValidationError> {
+    if *value == Duration::ZERO {
+        let err =
+            ValidationError::new("timeout_zero").with_message(Cow::from("must be greater than 0"));
+        return Err(err);
+    }
+    if *value > Duration::from_secs(60) {
+        let err =
+            ValidationError::new("timeout_too_large").with_message(Cow::from("must not exceed 60"));
+        return Err(err);
     }
     Ok(())
 }
@@ -247,6 +269,8 @@ impl Config {
                 vec!["content-type", "authorization"],
             )?
             .set_default("kms.url", "http://localhost:9000")?
+            .set_default("kms.connect_timeout", "3s")?
+            .set_default("kms.timeout", "10s")?
             .set_default("default_chain_id", 421614)?
             .add_source(
                 Environment::with_prefix("NOX_HANDLE_GATEWAY")

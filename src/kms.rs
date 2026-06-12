@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, error, info};
 
+use crate::config::KmsConfig;
 use crate::types::{
     DelegateAuthorization, DelegateResponseProof, EIP_712_DOMAIN_VERSION,
     PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME,
@@ -73,15 +74,19 @@ impl KmsClient {
     /// `public_key` is the KMS EC public key fetched on-chain from NoxCompute.
     /// `kms_signer_address` is the Ethereum address whose EIP-712 signature must
     /// appear on every delegate response.
-    pub fn new(base_url: String, kms_signer_address: Address) -> Result<Self, Error> {
-        let client = Client::builder().build().map_err(Error::ClientBuild)?;
+    pub fn new(config: &KmsConfig) -> Result<Self, Error> {
+        let client = Client::builder()
+            .connect_timeout(config.connect_timeout)
+            .timeout(config.timeout)
+            .build()
+            .map_err(Error::ClientBuild)?;
 
-        info!(kms_signer_address = %kms_signer_address, "KMS client initialized");
+        info!(kms_signer_address = %config.signer_address, "KMS client initialized");
 
         Ok(Self {
             client,
-            base_url: base_url.trim_end_matches('/').to_string(),
-            kms_signer_address,
+            base_url: config.url.trim_end_matches('/').to_string(),
+            kms_signer_address: config.signer_address,
         })
     }
 

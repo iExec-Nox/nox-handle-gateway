@@ -165,8 +165,7 @@ impl Application {
         }
 
         let crypto_svc = CryptoService::new(protocol_keys)?;
-        let kms_client =
-            KmsClient::new(self.config.kms.url.clone(), self.config.kms.signer_address)?;
+        let kms_client = KmsClient::new(&self.config.kms)?;
         let repository =
             DataRepository::new(&self.config.chains, self.config.s3_max_concurrent_requests)
                 .await?;
