@@ -333,23 +333,26 @@ pub async fn get_handle_crypto_material(
             user = payload.userAddress.to_string(),
             "attempting ERC-1271 fallback",
         );
-        nox_client
+        let is_valid_signature = nox_client
             .verify_erc1271(hash, &signature_bytes, payload.userAddress)
-            .await
-            .map_err(|e| {
-                warn!(
-                    handle,
-                    user = payload.userAddress.to_string(),
-                    "ERC-1271 signature verification failed: {e}",
-                );
-                AppError::Unauthorized("invalid signature".to_string())
-            })?;
+            .await?;
+        if !is_valid_signature {
+            warn!(
+                handle,
+                user = payload.userAddress.to_string(),
+                "ERC-1271 signature is invalid",
+            );
+            return Err(AppError::Unauthorized("invalid signature".to_string()));
+        }
     }
 
     let handle_b256 = parse_handle(&handle)?;
-    nox_client
+    let has_access = nox_client
         .check_access(handle_b256, payload.userAddress)
         .await?;
+    if !has_access {
+        return Err(AppError::AccessDenied("not a viewer".to_string()));
+    }
 
     let entry = state.repository.fetch_handle(&handle).await?;
 
@@ -406,9 +409,14 @@ pub async fn public_decrypt(
 
     info!(handle = %handle, "public_decrypt query");
 
-    state.nox_clients[&chain_id]
+    let is_public = state.nox_clients[&chain_id]
         .is_publicly_decryptable(handle_b256)
         .await?;
+    if !is_public {
+        return Err(AppError::AccessDenied(
+            "not publicly decryptable".to_string(),
+        ));
+    }
 
     let entry = state.repository.fetch_handle(&handle).await?;
 
