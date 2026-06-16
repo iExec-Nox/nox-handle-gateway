@@ -24,7 +24,7 @@ use tracing::{debug, error, info, warn};
 use crate::application::AppState;
 use crate::error::AppError;
 use crate::kms::KmsClient;
-use crate::repository::{HandleEntry, HandleS3Metadata};
+use crate::repository::{HandleEntry, HandleS3Metadata, S3Error};
 use crate::types::{DataAccessAuthorization, DecryptionProof, Handle, HandleProof, SolidityType};
 use crate::validation::{chain_id_from_handle, decode_and_validate_value, parse_handle};
 
@@ -168,7 +168,11 @@ pub async fn create_handle(
     state
         .repository
         .create_handle(chain_id, &entry, &metadata)
-        .await?;
+        .await
+        .map_err(|e| match e {
+            S3Error::AlreadyExists { key } => AppError::Conflict(key),
+            other => AppError::from(other),
+        })?;
 
     // HandleProof
     let nox_compute_domain = eip712_domain! {
@@ -354,7 +358,14 @@ pub async fn get_handle_crypto_material(
         return Err(AppError::AccessDenied("not a viewer".to_string()));
     }
 
-    let entry = state.repository.fetch_handle(&handle).await?;
+    let entry = state
+        .repository
+        .fetch_handle(&handle)
+        .await
+        .map_err(|e| match e {
+            S3Error::NotFound { key } => AppError::NotFound(key),
+            other => AppError::from(other),
+        })?;
 
     info!(handle, "decryption delegation request");
     let crypto_material = get_crypto_material_for_entry(
@@ -418,7 +429,14 @@ pub async fn public_decrypt(
         ));
     }
 
-    let entry = state.repository.fetch_handle(&handle).await?;
+    let entry = state
+        .repository
+        .fetch_handle(&handle)
+        .await
+        .map_err(|e| match e {
+            S3Error::NotFound { key } => AppError::NotFound(key),
+            other => AppError::from(other),
+        })?;
 
     // KMS delegate → encrypted shared secret
     let encrypted_shared_secret = state
@@ -683,7 +701,11 @@ pub async fn get_operand_handles(
     let operand_handles: Vec<HandleEntry> = state
         .repository
         .read_handles(chain_id, &compute_request.operands)
-        .await?;
+        .await
+        .map_err(|e| match e {
+            S3Error::InvalidHandle { reason } => AppError::BadRequest(reason),
+            other => AppError::from(other),
+        })?;
     debug!("operand handles count {}", operand_handles.len());
     if operand_handles.len() != operands_expected_count {
         let found_handles: Vec<String> = operand_handles

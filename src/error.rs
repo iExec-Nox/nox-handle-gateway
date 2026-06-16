@@ -27,6 +27,10 @@ pub enum AppError {
     InvalidSolidityValue(String),
     #[error("KMS error: {0}")]
     KmsError(#[from] kms::Error),
+    #[error("Not found: {0}")]
+    NotFound(String),
+    #[error("Conflict: {0}")]
+    Conflict(String),
     #[error("Operands not prepared for computation")]
     OperandsNotPrepared,
     #[error("RPC error: {0}")]
@@ -51,6 +55,8 @@ impl AppError {
             AppError::InvalidSolidityType(_) => "invalid_type",
             AppError::InvalidSolidityValue(_) => "invalid_value",
             AppError::KmsError(_) => "kms",
+            AppError::NotFound(_) => "not_found",
+            AppError::Conflict(_) => "conflict",
             AppError::OperandsNotPrepared => "operands",
             AppError::RpcError(_) => "rpc",
             AppError::SigningError(_) => "signing",
@@ -72,16 +78,12 @@ impl AppError {
                 kms::Error::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
+            AppError::NotFound(_) => StatusCode::NOT_FOUND,
+            AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::OperandsNotPrepared => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::RpcError(_) => StatusCode::SERVICE_UNAVAILABLE,
             AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::StorageError(e) => match e {
-                repository::S3Error::AlreadyExists { .. } => StatusCode::CONFLICT,
-                repository::S3Error::InvalidHandle { .. } => StatusCode::BAD_REQUEST,
-                repository::S3Error::NotFound { .. } => StatusCode::NOT_FOUND,
-                repository::S3Error::UnknownChain { .. } => StatusCode::BAD_REQUEST,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            },
+            AppError::StorageError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             AppError::UnknownChain(_) => StatusCode::BAD_REQUEST,
         }
