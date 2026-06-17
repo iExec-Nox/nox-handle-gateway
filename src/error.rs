@@ -69,7 +69,6 @@ impl AppError {
             AppError::InvalidSolidityType(_) => StatusCode::BAD_REQUEST,
             AppError::InvalidSolidityValue(_) => StatusCode::BAD_REQUEST,
             AppError::KmsError(e) => match e {
-                kms::Error::InvalidResponse(_) => StatusCode::BAD_REQUEST,
                 kms::Error::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
