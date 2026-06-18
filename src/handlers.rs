@@ -24,7 +24,7 @@ use tracing::{debug, error, info, warn};
 use crate::application::AppState;
 use crate::error::AppError;
 use crate::kms::KmsClient;
-use crate::repository::{HandleEntry, HandleS3Metadata, S3Error};
+use crate::repository::{HandleEntry, HandleEntryWithTag, HandleMetadata, RepositoryError};
 use crate::types::{DataAccessAuthorization, DecryptionProof, Handle, HandleProof, SolidityType};
 use crate::validation::{chain_id_from_handle, decode_and_validate_value, parse_handle};
 
@@ -154,7 +154,7 @@ pub async fn create_handle(
         nonce: hex::encode_prefixed(ecies_ciphertext.nonce),
     };
 
-    let metadata = HandleS3Metadata {
+    let metadata = HandleMetadata {
         handle: serialized_handle.clone(),
         created_at: Utc::now().naive_utc(),
         chain_id,
@@ -170,7 +170,7 @@ pub async fn create_handle(
         .create_handle(chain_id, &entry, &metadata)
         .await
         .map_err(|e| match e {
-            S3Error::AlreadyExists { key } => AppError::Conflict(key),
+            RepositoryError::Conflict(key) => AppError::Conflict(key),
             other => AppError::from(other),
         })?;
 
@@ -363,7 +363,7 @@ pub async fn get_handle_crypto_material(
         .fetch_handle(&handle)
         .await
         .map_err(|e| match e {
-            S3Error::NotFound { key } => AppError::NotFound(key),
+            RepositoryError::NotFound(key) => AppError::NotFound(key),
             other => AppError::from(other),
         })?;
 
@@ -434,7 +434,7 @@ pub async fn public_decrypt(
         .fetch_handle(&handle)
         .await
         .map_err(|e| match e {
-            S3Error::NotFound { key } => AppError::NotFound(key),
+            RepositoryError::NotFound(key) => AppError::NotFound(key),
             other => AppError::from(other),
         })?;
 
@@ -627,20 +627,6 @@ pub struct ComputeResultRequest {
     signature: String,
 }
 
-/// Atomic handle data sent by a known Runner when publishing results.
-///
-/// The `handle_value_tag` field allows to verify if the same handle
-/// has already been published with the same plaintext value.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HandleEntryWithTag {
-    pub handle: String,
-    pub handle_value_tag: String,
-    pub ciphertext: String,
-    pub public_key: String,
-    pub nonce: String,
-}
-
 /// Response sent to the Runner when publishing computation results.
 ///
 /// The response contains [`ResultPublishingReport`] EIP-712 data with its signed hash.
@@ -703,7 +689,7 @@ pub async fn get_operand_handles(
         .read_handles(chain_id, &compute_request.operands)
         .await
         .map_err(|e| match e {
-            S3Error::InvalidHandle { reason } => AppError::BadRequest(reason),
+            RepositoryError::BadRequest(reason) => AppError::BadRequest(reason),
             other => AppError::from(other),
         })?;
     debug!("operand handles count {}", operand_handles.len());

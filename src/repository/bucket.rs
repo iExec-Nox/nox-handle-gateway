@@ -17,16 +17,15 @@ use aws_sdk_s3::{
     primitives::DateTime,
     types::{ChecksumAlgorithm, ObjectLockEnabled, ObjectLockMode},
 };
-use chrono::{NaiveDateTime, Utc};
+use chrono::Utc;
 use futures_util::future::join_all;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
 
+use super::{HandleEntry, HandleEntryWithTag, HandleMetadata, PublishSummary};
 use crate::config::S3Config;
-use crate::handlers::HandleEntryWithTag;
 use crate::types::SolidityType;
 
 /// Object Lock retention period: 100 years expressed in seconds.
@@ -63,69 +62,6 @@ impl<E: std::error::Error + 'static, R: Debug> From<SdkError<E, R>> for S3Error 
         };
         S3Error::S3Operation { message }
     }
-}
-
-/// The handle entry stored as a JSON object in S3.
-///
-/// The S3 key is `0x` + the `handle` hex string. Only the crypto material
-/// needed to serve decryption requests is stored in the body. Enrichment
-/// fields (chain ID, data type, origin, …) live exclusively in S3 user
-/// metadata via [`HandleS3Metadata`].
-#[derive(Clone, Deserialize, Serialize)]
-pub struct HandleEntry {
-    pub handle: String,
-    pub ciphertext: String,
-    pub public_key: String,
-    pub nonce: String,
-}
-
-/// S3 user-metadata attached to every stored handle object.
-///
-/// These fields are not part of the JSON body — they are written once at
-/// creation time via [`PutObjectFluentBuilder::set_metadata`] and are
-/// available for external inspection (e.g. via `HeadObject`) without
-/// downloading the object body.
-///
-/// `content-sha256` is **not** included here; it is computed and inserted
-/// by [`BucketRepository::create_handle`] itself.
-pub struct HandleS3Metadata {
-    pub handle: String,
-    pub created_at: NaiveDateTime,
-    pub chain_id: u32,
-    pub data_type: String,
-    pub origin: String,
-    pub is_public: bool,
-    pub handle_value_tag: String,
-    pub application_contract: String,
-}
-
-impl HandleS3Metadata {
-    fn to_metadata_map(&self) -> HashMap<String, String> {
-        HashMap::from([
-            ("handle".to_string(), self.handle.clone()),
-            ("created-at".to_string(), self.created_at.to_string()),
-            ("chain-id".to_string(), self.chain_id.to_string()),
-            ("data-type".to_string(), self.data_type.clone()),
-            ("origin".to_string(), self.origin.clone()),
-            ("public".to_string(), self.is_public.to_string()),
-            (
-                "handle-value-tag".to_string(),
-                self.handle_value_tag.clone(),
-            ),
-            (
-                "application-contract".to_string(),
-                self.application_contract.clone(),
-            ),
-        ])
-    }
-}
-
-/// Per-handle outcome counts from a batch publish operation.
-#[derive(Serialize)]
-pub struct PublishSummary {
-    pub created: usize,
-    pub unchanged: usize,
-    pub conflicted: usize,
 }
 
 /// S3 client wrapper for handle storage operations.
@@ -267,7 +203,7 @@ impl BucketRepository {
     pub async fn create_handle(
         &self,
         entry: &HandleEntry,
-        s3_metadata: &HandleS3Metadata,
+        s3_metadata: &HandleMetadata,
     ) -> Result<(), S3Error> {
         let data = serde_json::to_vec(entry).map_err(|e| S3Error::S3Operation {
             message: format!("Failed to serialize entry: {e}"),
@@ -353,7 +289,7 @@ impl BucketRepository {
                     public_key: entry_with_tag.public_key.clone(),
                     nonce: entry_with_tag.nonce.clone(),
                 };
-                let s3_metadata = HandleS3Metadata {
+                let s3_metadata = HandleMetadata {
                     handle: entry_with_tag.handle.clone(),
                     created_at: Utc::now().naive_utc(),
                     chain_id,

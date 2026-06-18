@@ -38,7 +38,7 @@ pub enum AppError {
     #[error("Signing error: {0}")]
     SigningError(String),
     #[error("Storage error: {0}")]
-    StorageError(#[from] repository::S3Error),
+    StorageError(#[from] repository::RepositoryError),
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
     #[error("chain_id {0} not configured")]
