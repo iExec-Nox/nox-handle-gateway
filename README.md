@@ -63,8 +63,8 @@ git clone https://github.com/iExec-Nox/nox-handle-gateway.git
 cd nox-handle-gateway
 
 # Per-chain config — repeat this block for each chain ID you want to serve
-export NOX_HANDLE_GATEWAY_CHAINS__421614__RPC_URL="https://..."
 export NOX_HANDLE_GATEWAY_CHAINS__421614__NOX_COMPUTE_CONTRACT_ADDRESS="0x..."
+export NOX_HANDLE_GATEWAY_CHAINS__421614__RPC_URL="https://..."
 export NOX_HANDLE_GATEWAY_CHAINS__421614__WALLET_KEY="0x..."
 export NOX_HANDLE_GATEWAY_CHAINS__421614__S3__ACCESS_KEY="..."
 export NOX_HANDLE_GATEWAY_CHAINS__421614__S3__SECRET_KEY="..."
@@ -106,6 +106,8 @@ The Handle Gateway supports multiple chains simultaneously. Repeat the `CHAINS__
 
 | Variable | Description | Required | Default |
 | -------- | ----------- | -------- | ------- |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__CALL_TIMEOUT` | Total request timeout applied to a RPC call | No | `8s` |
+| `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__CONNECT_TIMEOUT` | Timeout for the connect phase against the Ethereum RPC endpoint | No | `5s` |
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__NOX_COMPUTE_CONTRACT_ADDRESS` | NoxCompute contract address for this chain | **Yes** | — |
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__RPC_URL` | Ethereum RPC endpoint for this chain | **Yes** | — |
 | `NOX_HANDLE_GATEWAY_CHAINS__<CHAIN_ID>__WALLET_KEY` | EIP-712 signing key for this chain (hex, with or without `0x` prefix) | **Yes** | — |
