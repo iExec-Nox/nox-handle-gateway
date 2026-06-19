@@ -1,9 +1,15 @@
+//! Module implementing interactions with a NoxCompute Smart Contract instance.
+
+use std::time::Duration;
+
 use alloy::{
     primitives::{Address, B256, Bytes, FixedBytes},
     providers::RootProvider,
+    rpc::client::RpcClient,
     sol,
 };
 use k256::PublicKey;
+use reqwest::{Client, Url};
 use thiserror::Error;
 
 sol! {
@@ -51,11 +57,21 @@ impl NoxClient {
     /// Connects to the Ethereum node at `rpc_url` and wraps the `INoxCompute`
     /// contract at `contract_address`. Returns [`RpcError::ProviderError`] if
     /// the connection fails.
-    pub async fn new(rpc_url: &str, contract_address: Address) -> Result<Self, RpcError> {
-        let trimmed_rpc_url = rpc_url.trim_end_matches('/');
-        let provider = RootProvider::connect(trimmed_rpc_url)
-            .await
+    pub async fn new(
+        rpc_url: &str,
+        call_timeout: Duration,
+        connect_timeout: Duration,
+        contract_address: Address,
+    ) -> Result<Self, RpcError> {
+        let rpc_url = Url::parse(rpc_url.trim_end_matches('/'))
             .map_err(|e| RpcError::ProviderError(e.to_string()))?;
+        let client = Client::builder()
+            .connect_timeout(connect_timeout)
+            .timeout(call_timeout)
+            .build()
+            .map_err(|e| RpcError::ProviderError(e.to_string()))?;
+        let rpc_client = RpcClient::new_http_with_client(client, rpc_url);
+        let provider = RootProvider::new(rpc_client);
         let contract = INoxCompute::new(contract_address, provider);
         Ok(Self { contract })
     }
@@ -157,12 +173,12 @@ impl NoxClient {
 /// Integration tests for ERC1271 signature verification against the Arbitrum Sepolia state using a third-party RPC node.
 /// These tests are ignored by default, run them with `cargo test -- --ignored`.
 mod verify_erc1271_tests {
+    use super::*;
+    use crate::config::{default_rpc_call_timeout, default_rpc_connect_timeout};
     use alloy::{
         hex,
         primitives::{address, b256},
     };
-
-    use super::*;
 
     /// RPC node for Arbitrum Sepolia, any RPC node that supports Arbitrum Sepolia should work, this one is operated by a third party and may break.
     const RPC_URL: &str = "https://arbitrum-sepolia.drpc.org";
@@ -176,7 +192,14 @@ mod verify_erc1271_tests {
     );
 
     async fn make_arbitrum_sepolia_client(rpc_url: &str) -> NoxClient {
-        NoxClient::new(rpc_url, Address::ZERO).await.unwrap()
+        NoxClient::new(
+            rpc_url,
+            default_rpc_call_timeout(),
+            default_rpc_connect_timeout(),
+            Address::ZERO,
+        )
+        .await
+        .unwrap()
     }
 
     #[tokio::test]

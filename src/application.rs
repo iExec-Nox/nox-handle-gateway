@@ -120,8 +120,13 @@ impl Application {
         for (chain_id, chain_cfg) in &self.config.chains {
             let chain_id = *chain_id;
 
-            let nox_client =
-                NoxClient::new(&chain_cfg.rpc_url, chain_cfg.nox_compute_contract_address).await?;
+            let nox_client = NoxClient::new(
+                &chain_cfg.rpc_url,
+                chain_cfg.call_timeout,
+                chain_cfg.connect_timeout,
+                chain_cfg.nox_compute_contract_address,
+            )
+            .await?;
 
             let kms_public_key = nox_client.kms_public_key().await?;
 
