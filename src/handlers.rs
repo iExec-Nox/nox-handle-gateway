@@ -794,7 +794,7 @@ async fn get_crypto_material_for_entry(
 ///
 /// The operation will fail with:
 /// - [`AppError::Unauthorized`] if the authorization token cannot be verified.
-/// - [`super::repository::S3Error`] if an error occurs during publishing.
+/// - [`AppError::StorageError`] if an unexpected storage error occurs during publishing.
 pub async fn publish_results(
     State(state): State<AppState>,
     Query(query_params): Query<QueryParams>,

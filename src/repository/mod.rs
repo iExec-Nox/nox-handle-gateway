@@ -213,8 +213,6 @@ impl DataRepository {
     ///
     /// All operands in one compute request belong to the same transaction and
     /// therefore to the same chain. A mixed-chain batch is a caller issue and is rejected with [`RepositoryError::BadRequest`].
-    ///
-    ///
     pub async fn read_handles(
         &self,
         chain_id: u32,
