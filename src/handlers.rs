@@ -171,7 +171,7 @@ pub async fn create_handle(
         .await
         .map_err(|e| match e {
             RepositoryError::Conflict(key) => AppError::Conflict(key),
-            other => AppError::from(other),
+            other => AppError::StorageError(other),
         })?;
 
     // HandleProof
@@ -364,7 +364,7 @@ pub async fn get_handle_crypto_material(
         .await
         .map_err(|e| match e {
             RepositoryError::NotFound(key) => AppError::NotFound(key),
-            other => AppError::from(other),
+            other => AppError::StorageError(other),
         })?;
 
     info!(handle, "decryption delegation request");
@@ -435,7 +435,7 @@ pub async fn public_decrypt(
         .await
         .map_err(|e| match e {
             RepositoryError::NotFound(key) => AppError::NotFound(key),
-            other => AppError::from(other),
+            other => AppError::StorageError(other),
         })?;
 
     // KMS delegate → encrypted shared secret
@@ -690,7 +690,7 @@ pub async fn get_operand_handles(
         .await
         .map_err(|e| match e {
             RepositoryError::BadRequest(reason) => AppError::BadRequest(reason),
-            other => AppError::from(other),
+            other => AppError::StorageError(other),
         })?;
     debug!("operand handles count {}", operand_handles.len());
     if operand_handles.len() != operands_expected_count {
