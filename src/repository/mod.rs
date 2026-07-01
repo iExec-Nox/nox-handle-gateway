@@ -188,7 +188,7 @@ impl DataRepository {
 
     /// Routes to the bucket for the handle's chain ID.
     ///
-    /// Returns [`S3Error::NotFound`] rather than [`S3Error::UnknownChain`] when
+    /// Returns [`RepositoryError::NotFound`] rather than a generic internal error when
     /// the chain ID is not configured because an unconfigured chain means the handle
     /// cannot exist, which is indistinguishable from a missing key to the caller.
     // TODO: surface a richer not-found variant that distinguishes
