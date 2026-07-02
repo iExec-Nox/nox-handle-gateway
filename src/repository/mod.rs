@@ -54,10 +54,12 @@ pub struct HandleEntryWithTag {
     pub nonce: String,
 }
 
-/// user-metadata attached to every stored handle object.
+/// User-metadata attached to every stored handle object.
 ///
 /// These fields are not part of the HandleEntry JSON body - they are written once at creation time and are available for external inspection without downloading the object body.
-/// `content-sha256` is **not** included here (not an user metadata)
+///
+/// `content-sha256` is **not** included here; it is computed and inserted
+/// by [`BucketRepository::create_handle`] itself.
 pub struct HandleMetadata {
     pub handle: String,
     pub created_at: NaiveDateTime,
@@ -104,10 +106,12 @@ pub enum RepositoryError {
     NotFound(String),
     #[error("Conflict: {0}")]
     Conflict(String),
-    #[error("Bad request: {0}")]
-    BadRequest(String),
     #[error("Storage failure: {0}")]
     Internal(S3Error), // only escapes if it's a genuine infra failure
+    #[error("Invalid handle: {reason}")]
+    InvalidHandle { reason: String },
+    #[error("No S3 bucket configured for chain ID {chain_id}")]
+    UnknownChain { chain_id: u32 },
 }
 
 impl From<S3Error> for RepositoryError {
@@ -149,10 +153,10 @@ impl DataRepository {
         Ok(Self { repos })
     }
 
-    fn repo_for_chain(&self, chain_id: u32) -> Result<&BucketRepository, S3Error> {
+    fn repo_for_chain(&self, chain_id: u32) -> Result<&BucketRepository, RepositoryError> {
         self.repos
             .get(&chain_id)
-            .ok_or(S3Error::UnknownChain { chain_id })
+            .ok_or(RepositoryError::UnknownChain { chain_id })
     }
 
     pub async fn create_handle(
@@ -188,7 +192,7 @@ impl DataRepository {
 
     /// Routes to the bucket for the handle's chain ID.
     ///
-    /// Returns [`RepositoryError::NotFound`] rather than a generic internal error when
+    /// Returns [`RepositoryError::NotFound`] rather than [`RepositoryError::UnknownChain`] when
     /// the chain ID is not configured because an unconfigured chain means the handle
     /// cannot exist, which is indistinguishable from a missing key to the caller.
     // TODO: surface a richer not-found variant that distinguishes
@@ -196,23 +200,25 @@ impl DataRepository {
     // the gateway does not know" and includes the set of configured chain IDs
     // so operators can spot misconfiguration quickly.
     pub async fn fetch_handle(&self, handle: &str) -> Result<HandleEntry, RepositoryError> {
-        let chain_id = chain_id_from_handle(handle).map_err(|e| S3Error::InvalidHandle {
-            reason: e.to_string(),
-        })?;
-        let repo = self.repo_for_chain(chain_id).map_err(|e| match e {
-            S3Error::UnknownChain { .. } => RepositoryError::NotFound(handle.to_string()),
-            _ => RepositoryError::Internal(e),
-        })?;
-        repo.fetch_handle(handle).await.map_err(|e| match e {
-            S3Error::NotFound { key } => RepositoryError::NotFound(key),
-            _ => RepositoryError::Internal(e),
-        })
+        let chain_id =
+            chain_id_from_handle(handle).map_err(|e| RepositoryError::InvalidHandle {
+                reason: e.to_string(),
+            })?;
+        self.repo_for_chain(chain_id)
+            .map_err(|_| RepositoryError::NotFound(handle.to_string()))?
+            .fetch_handle(handle)
+            .await
+            .map_err(|e| match e {
+                S3Error::NotFound { key } => RepositoryError::NotFound(key),
+                _ => RepositoryError::Internal(e),
+            })
     }
 
     /// Fetches entries from the bucket for a single chain.
     ///
     /// All operands in one compute request belong to the same transaction and
-    /// therefore to the same chain. A mixed-chain batch is a caller issue and is rejected with [`RepositoryError::BadRequest`].
+    /// therefore to the same chain. A mixed-chain batch is a caller issue and
+    /// is rejected with [`RepositoryError::InvalidHandle`].
     pub async fn read_handles(
         &self,
         chain_id: u32,
@@ -220,11 +226,15 @@ impl DataRepository {
     ) -> Result<Vec<HandleEntry>, RepositoryError> {
         for id in ids {
             let handle_chain =
-                chain_id_from_handle(id).map_err(|e| RepositoryError::BadRequest(e.to_string()))?;
+                chain_id_from_handle(id).map_err(|e| RepositoryError::InvalidHandle {
+                    reason: e.to_string(),
+                })?;
             if handle_chain != chain_id {
-                return Err(RepositoryError::BadRequest(format!(
-                    "handle {id} encodes chain {handle_chain}, expected {chain_id}",
-                )));
+                return Err(RepositoryError::InvalidHandle {
+                    reason: format!(
+                        "handle {id} encodes chain {handle_chain}, expected {chain_id}",
+                    ),
+                });
             }
         }
         Ok(self.repo_for_chain(chain_id)?.read_handles(ids).await?)

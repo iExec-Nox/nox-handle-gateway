@@ -38,14 +38,10 @@ const METADATA_CONTENT_SHA256: &str = "content-sha256";
 pub enum S3Error {
     #[error("Object already exists: {key}")]
     AlreadyExists { key: String },
-    #[error("Invalid handle: {reason}")]
-    InvalidHandle { reason: String },
     #[error("Object not found: {key}")]
     NotFound { key: String },
     #[error("S3 operation failed: {message}")]
     S3Operation { message: String },
-    #[error("No S3 bucket configured for chain ID {chain_id}")]
-    UnknownChain { chain_id: u32 },
 }
 
 pub enum S3HandleCreationStatus {

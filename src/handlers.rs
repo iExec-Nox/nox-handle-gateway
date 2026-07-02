@@ -171,6 +171,7 @@ pub async fn create_handle(
         .await
         .map_err(|e| match e {
             RepositoryError::Conflict(key) => AppError::Conflict(key),
+            RepositoryError::UnknownChain { .. } => AppError::BadRequest(e.to_string()),
             other => AppError::StorageError(other),
         })?;
 
@@ -689,7 +690,7 @@ pub async fn get_operand_handles(
         .read_handles(chain_id, &compute_request.operands)
         .await
         .map_err(|e| match e {
-            RepositoryError::BadRequest(reason) => AppError::BadRequest(reason),
+            RepositoryError::InvalidHandle { reason } => AppError::BadRequest(reason),
             other => AppError::StorageError(other),
         })?;
     debug!("operand handles count {}", operand_handles.len());
