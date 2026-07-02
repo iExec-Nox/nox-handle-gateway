@@ -7,12 +7,13 @@ use alloy::{
     primitives::{Address, B256, Bytes, U256, hex, keccak256},
     signers::{Signature, SignerSync, local::PrivateKeySigner},
     sol,
-    sol_types::{Eip712Domain, SolStruct, eip712_domain},
+    sol_types::{SolStruct, eip712_domain},
 };
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::header::HeaderMap,
+    http::{StatusCode, header::HeaderMap},
+    response::{IntoResponse, Response},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{TimeZone, Utc};
@@ -51,6 +52,26 @@ pub struct QueryParams {
     salt: Option<String>,
 }
 
+/// EIP-712 signed response wrapper used by every Handle Gateway endpoint.
+///
+/// Every handler wraps its response payload in this type. The `signature` is an
+/// EIP-712 signature over `payload` under the Handle Gateway domain, so callers
+/// can verify the response originates from this gateway.
+#[derive(Serialize)]
+pub struct SignedResponse<T: Serialize> {
+    /// The HTTP status code is not part of the response body
+    #[serde(skip)]
+    pub status_code: StatusCode,
+    pub payload: T,
+    pub signature: String,
+}
+
+impl<T: Serialize> IntoResponse for SignedResponse<T> {
+    fn into_response(self) -> Response {
+        (self.status_code, Json(self)).into_response()
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HandleRequest {
@@ -60,21 +81,34 @@ pub struct HandleRequest {
     application_contract: Address,
 }
 
-/// Response for `POST /v0/secrets` — carries signed [`HandleWithProof`].
-#[derive(Serialize)]
-pub struct HandleResponse {
-    payload: HandleWithProof,
-    signature: String,
+/// Response for `POST /v0/secrets`
+pub enum HandleResponse {
+    Success(SignedResponse<HandleWithProof>),
 }
 
-/// Inner payload of `GET /v0/public/{handle}` response.
-/// Response for `GET /v0/public/{handle}` — carries signed [`PublicDecryptionResult`].
-#[derive(Serialize)]
-pub struct PublicDecryptResponse {
-    payload: PublicDecryptionResult,
-    signature: String,
+impl IntoResponse for HandleResponse {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Success(r) => r.into_response(),
+        }
+    }
 }
 
+/// Response for `GET /v0/public/{handle}`
+pub enum PublicDecryptResponse {
+    Success(SignedResponse<PublicDecryptionResult>),
+}
+
+impl IntoResponse for PublicDecryptResponse {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Success(r) => r.into_response(),
+        }
+    }
+}
+
+/// DataAccessAuthorization EIP-712
+/// signed by the caller to prove they are allowed to retrieve operands from the Handle Gateway.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GatewayDelegateAuthorization {
@@ -82,12 +116,17 @@ struct GatewayDelegateAuthorization {
     signature: String,
 }
 
-/// Response for `GET /v0/secrets/{handle}` — carries signed [`HandleCryptoMaterial`].
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GatewayDelegateResponse {
-    payload: HandleCryptoMaterial,
-    signature: String,
+/// Response for `GET /v0/secrets/{handle}`.
+pub enum GetHandleCryptoMaterialResponse {
+    Success(SignedResponse<HandleCryptoMaterial>),
+}
+
+impl IntoResponse for GetHandleCryptoMaterialResponse {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Success(r) => r.into_response(),
+        }
+    }
 }
 
 /// Encrypts a plaintext value and stores it under a freshly generated handle.
@@ -114,7 +153,7 @@ pub async fn create_handle(
     State(state): State<AppState>,
     Query(query_params): Query<QueryParams>,
     Json(request): Json<HandleRequest>,
-) -> Result<Json<HandleResponse>, AppError> {
+) -> Result<HandleResponse, AppError> {
     let chain_id = match query_params.chain_id {
         Some(requested) => requested,
         None => {
@@ -202,16 +241,13 @@ pub async fn create_handle(
         handle: serialized_handle,
         proof: serialized_handle_proof,
     };
-    let response_domain = handle_gateway_response_domain(chain_id, salt);
-    let handle_response_signature = state.signers[&chain_id]
-        .sign_typed_data_sync(&handle_with_proof, &response_domain)
-        .map_err(|e| AppError::SigningError(e.to_string()))?
-        .to_string();
-
-    Ok(Json(HandleResponse {
-        payload: handle_with_proof,
-        signature: handle_response_signature,
-    }))
+    Ok(HandleResponse::Success(sign_response(
+        &state.signers[&chain_id],
+        chain_id,
+        salt,
+        handle_with_proof,
+        StatusCode::OK,
+    )?))
 }
 
 /// Serve encrypted crypto material for a handle after verifying caller identity and ACL.
@@ -238,7 +274,7 @@ pub async fn get_handle_crypto_material(
     State(state): State<AppState>,
     Query(query_params): Query<QueryParams>,
     headers: HeaderMap,
-) -> Result<Json<GatewayDelegateResponse>, AppError> {
+) -> Result<GetHandleCryptoMaterialResponse, AppError> {
     let salt = extract_salt(query_params.salt)?;
     let chain_id = chain_id_from_handle(&handle)?;
     if !state.verify_chain(chain_id) {
@@ -378,16 +414,13 @@ pub async fn get_handle_crypto_material(
     )
     .await?;
 
-    let response_domain = handle_gateway_response_domain(chain_id, salt);
-    let signature = state.signers[&chain_id]
-        .sign_typed_data_sync(&crypto_material, &response_domain)
-        .map_err(|e| AppError::SigningError(e.to_string()))?
-        .to_string();
-
-    Ok(Json(GatewayDelegateResponse {
-        payload: crypto_material,
-        signature,
-    }))
+    Ok(GetHandleCryptoMaterialResponse::Success(sign_response(
+        &state.signers[&chain_id],
+        chain_id,
+        salt,
+        crypto_material,
+        StatusCode::OK,
+    )?))
 }
 
 /// Returns a verifiable EIP-712 decryption proof for a publicly decryptable handle.
@@ -409,7 +442,7 @@ pub async fn public_decrypt(
     Path(handle): Path<String>,
     State(state): State<AppState>,
     Query(query_params): Query<QueryParams>,
-) -> Result<Json<PublicDecryptResponse>, AppError> {
+) -> Result<PublicDecryptResponse, AppError> {
     let salt = extract_salt(query_params.salt)?;
     let handle_b256 = parse_handle(&handle)?;
     SolidityType::try_from(handle_b256[5])?;
@@ -481,16 +514,13 @@ pub async fn public_decrypt(
     let result_payload = PublicDecryptionResult {
         decryptionProof: hex::encode_prefixed(serialized),
     };
-    let response_domain = handle_gateway_response_domain(chain_id, salt);
-    let public_decrypt_response_signature = state.signers[&chain_id]
-        .sign_typed_data_sync(&result_payload, &response_domain)
-        .map_err(|e| AppError::SigningError(e.to_string()))?
-        .to_string();
-
-    Ok(Json(PublicDecryptResponse {
-        payload: result_payload,
-        signature: public_decrypt_response_signature,
-    }))
+    Ok(PublicDecryptResponse::Success(sign_response(
+        &state.signers[&chain_id],
+        chain_id,
+        salt,
+        result_payload,
+        StatusCode::OK,
+    )?))
 }
 
 fn format_timestamp(ts: U256) -> String {
@@ -607,14 +637,17 @@ pub struct ComputeOperandRequest {
     signature: String,
 }
 
-/// Full response to send operands from the Handle Gateway to the Runner.
-///
-/// It contains the plain [`ComputeOperands`] EIP-712 data with its signed hash.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ComputeOperandResponse {
-    payload: ComputeOperands,
-    signature: String,
+/// Response for `GET /compute/operands`
+pub enum ComputeOperandResponse {
+    Success(SignedResponse<ComputeOperands>),
+}
+
+impl IntoResponse for ComputeOperandResponse {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Success(r) => r.into_response(),
+        }
+    }
 }
 
 /// Full authorization data to receive compute results from a Runner.
@@ -632,11 +665,16 @@ pub struct ComputeResultRequest {
 ///
 /// The response contains [`ResultPublishingReport`] EIP-712 data with its signed hash.
 /// This allows the Runner to verify the data was sent to a known Handle Gateway.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ComputeResultResponse {
-    payload: ResultPublishingReport,
-    signature: String,
+pub enum ComputeResultResponse {
+    Success(SignedResponse<ResultPublishingReport>),
+}
+
+impl IntoResponse for ComputeResultResponse {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Success(r) => r.into_response(),
+        }
+    }
 }
 
 /// Retrieves from S3 Handles required as operands by a Runner to perform a computation.
@@ -655,7 +693,7 @@ pub async fn get_operand_handles(
     State(state): State<AppState>,
     Query(query_params): Query<QueryParams>,
     headers: HeaderMap,
-) -> Result<Json<ComputeOperandResponse>, AppError> {
+) -> Result<ComputeOperandResponse, AppError> {
     let salt = extract_salt(query_params.salt)?;
     let token_bytes = extract_authorization(headers)?;
     let authorization: ComputeOperandRequest =
@@ -751,13 +789,13 @@ pub async fn get_operand_handles(
         operands: operands_crypto_material,
     };
 
-    let response_domain = handle_gateway_response_domain(chain_id, salt);
-    let signature = state.signers[&chain_id]
-        .sign_typed_data_sync(&payload, &response_domain)
-        .map_err(|e| AppError::SigningError(e.to_string()))?
-        .to_string();
-
-    Ok(Json(ComputeOperandResponse { payload, signature }))
+    Ok(ComputeOperandResponse::Success(sign_response(
+        &state.signers[&chain_id],
+        chain_id,
+        salt,
+        payload,
+        StatusCode::OK,
+    )?))
 }
 
 async fn get_crypto_material_for_entry(
@@ -801,7 +839,7 @@ pub async fn publish_results(
     Query(query_params): Query<QueryParams>,
     headers: HeaderMap,
     Json(handles): Json<Vec<HandleEntryWithTag>>,
-) -> Result<Json<ComputeResultResponse>, AppError> {
+) -> Result<ComputeResultResponse, AppError> {
     let salt = extract_salt(query_params.salt)?;
     let token_bytes = extract_authorization(headers)?;
     let authorization: ComputeResultRequest =
@@ -851,13 +889,13 @@ pub async fn publish_results(
         ),
     };
 
-    let response_domain = handle_gateway_response_domain(chain_id, salt);
-    let signature = state.signers[&chain_id]
-        .sign_typed_data_sync(&payload, &response_domain)
-        .map_err(|e| AppError::SigningError(e.to_string()))?
-        .to_string();
-
-    Ok(Json(ComputeResultResponse { payload, signature }))
+    Ok(ComputeResultResponse::Success(sign_response(
+        &state.signers[&chain_id],
+        chain_id,
+        salt,
+        payload,
+        StatusCode::OK,
+    )?))
 }
 
 /// Request body for `POST /v0/public/handles/status`.
@@ -869,12 +907,17 @@ pub struct HandleStatusRequest {
     handles: Vec<String>,
 }
 
-/// Response for `POST /v0/public/handles/status` — carries signed [`HandleStatusReport`].
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HandleStatusReportResponse {
-    payload: HandleStatusReport,
-    signature: String,
+/// Response for `POST /v0/public/handles/status`
+pub enum HandleStatusReportResponse {
+    Success(SignedResponse<HandleStatusReport>),
+}
+
+impl IntoResponse for HandleStatusReportResponse {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Success(r) => r.into_response(),
+        }
+    }
 }
 
 /// Reports which handles from the request are already resolved (stored in S3).
@@ -893,7 +936,7 @@ pub async fn handle_status(
     State(state): State<AppState>,
     Query(query_params): Query<QueryParams>,
     Json(request): Json<HandleStatusRequest>,
-) -> Result<Json<HandleStatusReportResponse>, AppError> {
+) -> Result<HandleStatusReportResponse, AppError> {
     let salt = extract_salt(query_params.salt)?;
     info!(count = request.handles.len(), "handle status request");
     if request.handles.is_empty() {
@@ -931,25 +974,40 @@ pub async fn handle_status(
         })
         .collect();
     let payload = HandleStatusReport { statuses };
-    let response_domain = handle_gateway_response_domain(chain_id, salt);
-    let signature = state.signers[&chain_id]
-        .sign_typed_data_sync(&payload, &response_domain)
-        .map_err(|e| AppError::SigningError(e.to_string()))?
-        .to_string();
-    Ok(Json(HandleStatusReportResponse { payload, signature }))
+    Ok(HandleStatusReportResponse::Success(sign_response(
+        &state.signers[&chain_id],
+        chain_id,
+        salt,
+        payload,
+        StatusCode::OK,
+    )?))
 }
 
-/// Builds the Handle Gateway EIP-712 domain used to sign all gateway responses.
-///
-/// The `salt` parameter binds the signature to a specific request, preventing
-/// response replay across different callers or requests.
-fn handle_gateway_response_domain(chain_id: u32, salt: B256) -> Eip712Domain {
-    eip712_domain! {
+/// Signs a payload under the "Handle Gateway" EIP-712 domain and wraps it in a [`SignedResponse`].
+/// The `salt` parameter binds the signature to a specific request,
+/// preventing response replay across different callers or requests.
+fn sign_response<T: SolStruct + Serialize>(
+    signer: &PrivateKeySigner,
+    chain_id: u32,
+    salt: B256,
+    payload: T,
+    status_code: StatusCode,
+) -> Result<SignedResponse<T>, AppError> {
+    let domain = eip712_domain! {
         name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(chain_id),
         salt: salt,
-    }
+    };
+    let signature = signer
+        .sign_typed_data_sync(&payload, &domain)
+        .map_err(|e| AppError::SigningError(e.to_string()))?
+        .to_string();
+    Ok(SignedResponse {
+        payload,
+        signature,
+        status_code,
+    })
 }
 
 /// Parses the optional `salt` query parameter into a 32-byte value.
