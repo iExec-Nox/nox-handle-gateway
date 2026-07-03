@@ -17,7 +17,7 @@ use k256::{
 use rsa::{Oaep, RsaPrivateKey, RsaPublicKey, pkcs8::EncodePublicKey};
 use sha2::Sha256;
 use thiserror::Error;
-use tracing::info;
+use tracing::{error, info};
 
 /// HKDF info/context string for key derivation
 const ECIES_CONTEXT: &[u8] = b"ECIES:AES_GCM:v1";
@@ -127,23 +127,30 @@ impl CryptoService {
         encrypted_shared_secret: &str,
         nonce: &str,
     ) -> Result<Vec<u8>, Error> {
-        let nonce_bytes = hex::decode(nonce).map_err(|e| {
-            Error::EciesDecryptionError(format!("Failed to decode nonce hex string: {e}"))
-        })?;
-        let ciphertext_bytes = hex::decode(ciphertext).map_err(|e| {
-            Error::EciesDecryptionError(format!("Failed to decode ciphertext hex string: {e}"))
-        })?;
-        let encrypted_shared_secret_bytes = hex::decode(encrypted_shared_secret).map_err(|e| {
-            Error::EciesDecryptionError(format!(
-                "Failed to decode encrypted shared secret hex string: {e}"
-            ))
-        })?;
+        let nonce_bytes = hex::decode(nonce)
+            .inspect_err(|e| error!("Failed to decode nonce hex string: {e}"))
+            .map_err(|_| {
+                Error::EciesDecryptionError("Failed to decode nonce hex string".to_string())
+            })?;
+        let ciphertext_bytes = hex::decode(ciphertext)
+            .inspect_err(|e| error!("Failed to decode ciphertext hex string: {e}"))
+            .map_err(|_| {
+                Error::EciesDecryptionError("Failed to decode ciphertext hex string".to_string())
+            })?;
+        let encrypted_shared_secret_bytes = hex::decode(encrypted_shared_secret)
+            .inspect_err(|e| error!("Failed to decode encrypted shared secret hex string: {e}"))
+            .map_err(|_| {
+                Error::EciesDecryptionError(
+                    "Failed to decode encrypted shared secret hex string".to_string(),
+                )
+            })?;
 
         let shared_secret = self
             .private
             .decrypt(Oaep::new::<Sha256>(), &encrypted_shared_secret_bytes)
-            .map_err(|e| {
-                Error::EciesDecryptionError(format!("Failed to decrypt shared secret: {e}"))
+            .inspect_err(|e| error!("Failed to decrypt shared secret: {e}"))
+            .map_err(|_| {
+                Error::EciesDecryptionError("Failed to decrypt shared secret".to_string())
             })?;
 
         let hkdf = Hkdf::<Sha256>::new(None, &shared_secret);
