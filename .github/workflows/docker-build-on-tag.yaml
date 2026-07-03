@@ -72,7 +72,7 @@ jobs:
       attestations: write
       artifact-metadata: write # write attestation storage record (push-to-registry)
     with:
-      image-name: iexechub/nox-handle-gateway
+      image-name: docker.io/iexechub/nox-handle-gateway
       image-tag: ${{ needs.prepare.outputs.image_tag }}
       platforms: linux/amd64,linux/arm64
       cloud-builder-endpoint: ${{ vars.DOCKER_CLOUD_BUILDER_LABEL }}
