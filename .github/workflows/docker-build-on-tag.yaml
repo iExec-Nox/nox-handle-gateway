@@ -38,7 +38,12 @@ jobs:
   build-oci-image:
     name: Build OCI image
     needs: prepare
-    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build.yml@docker-build-v3.4.0
+    # version du reusable incluant l'input `attest` (à ajuster au tag réellement publié)
+    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build.yml@2fc2921c9527b8e0c3217edecbb828ec75cb610a # workflow state: v3.5.1
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     with:
       image-name: docker-regis.iex.ec/nox-handle-gateway
       image-tag: ${{ needs.prepare.outputs.image_tag }}
@@ -46,6 +51,7 @@ jobs:
       context: .
       registry: docker-regis.iex.ec
       push: true
+      attest: true
       security-scan: true
       security-report: "comment"
       hadolint: true
@@ -59,12 +65,18 @@ jobs:
   build-dockerhub-multiplatform:
     name: Build and push multi-platform image to DockerHub
     needs: prepare
-    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build-cloud.yml@docker-build-cloud-v1.0.0
+    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build-cloud.yml@2fc2921c9527b8e0c3217edecbb828ec75cb610a # workflow state: v1.1.0
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write # write attestation storage record (push-to-registry)
     with:
-      image-name: iexechub/nox-handle-gateway
+      image-name: docker.io/iexechub/nox-handle-gateway
       image-tag: ${{ needs.prepare.outputs.image_tag }}
       platforms: linux/amd64,linux/arm64
       cloud-builder-endpoint: ${{ vars.DOCKER_CLOUD_BUILDER_LABEL }}
+      attest: true
     secrets:
       dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
       dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}
