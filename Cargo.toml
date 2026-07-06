@@ -20,6 +20,10 @@ futures-util = "0.3.32"
 hkdf = "0.12.4"
 humantime-serde = "1.1.1"
 k256 = { version = "0.13.4", features = ["ecdh"] }
+opentelemetry = "0.32.0"
+opentelemetry-appender-tracing = "0.32.0"
+opentelemetry-otlp = "0.32.0"
+opentelemetry_sdk = "0.32.0"
 reqwest = { version = "0.13.3", features = ["json", "query"] }
 rsa = "0.9.10"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -29,6 +33,7 @@ thiserror = "2.0.18"
 tokio = { version = "1.52.3", features = ["full"] }
 tower-http = { version = "0.6.10", features = ["trace", "cors"] }
 tracing = "0.1.44"
+tracing-opentelemetry = "0.33.0"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 validator = { version = "0.20.0", features = ["derive"] }
 

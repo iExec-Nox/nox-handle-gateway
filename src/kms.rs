@@ -4,12 +4,17 @@ use alloy::{
     sol_types::{SolStruct, eip712_domain},
 };
 use k256::elliptic_curve::rand_core::{OsRng, RngCore};
-use reqwest::{Client, header::AUTHORIZATION};
+use opentelemetry::{Context, global};
+use reqwest::{
+    Client,
+    header::{AUTHORIZATION, HeaderMap, HeaderValue},
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, error, info};
 
 use crate::config::KmsConfig;
+use crate::observability::HeaderInjector;
 use crate::types::{
     DelegateAuthorization, DelegateResponseProof, EIP_712_DOMAIN_VERSION,
     PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME,
@@ -95,6 +100,7 @@ impl KmsClient {
     /// Signs the request with an EIP-712 [`DelegateAuthorization`] and verifies
     /// the KMS response carries a valid [`DelegateResponseProof`] from the
     /// expected signer address.
+    #[tracing::instrument(skip_all)]
     pub async fn get_encrypted_shared_secret(
         &self,
         handle: &str,
@@ -118,6 +124,16 @@ impl KmsClient {
             target_pub_key = %target_pub_key,
             "KMS delegate request (signed)"
         );
+
+        let mut headers = HeaderMap::new();
+        let cx = Context::current();
+        global::get_text_map_propagator(|propagator| {
+            propagator.inject_context(&cx, &mut HeaderInjector(&mut headers));
+        });
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {authorization}")).unwrap(),
+        ); // pas ouf
 
         let request_body = KmsDelegateRequestBody {
             ephemeral_pub_key: ephemeral_pub_key.to_string(),

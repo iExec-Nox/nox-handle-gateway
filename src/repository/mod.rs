@@ -174,6 +174,7 @@ impl DataRepository {
             })
     }
 
+    #[tracing::instrument(skip_all)]
     pub async fn create_handles(
         &self,
         entries: Vec<HandleEntryWithTag>,
@@ -219,6 +220,7 @@ impl DataRepository {
     /// All operands in one compute request belong to the same transaction and
     /// therefore to the same chain. A mixed-chain batch is a caller issue and
     /// is rejected with [`RepositoryError::InvalidHandle`].
+    #[tracing::instrument(skip_all)]
     pub async fn read_handles(
         &self,
         chain_id: u32,
@@ -244,6 +246,7 @@ impl DataRepository {
     ///
     /// The caller is responsible for ensuring all `ids` belong to `chain_id`
     /// and that `chain_id` is a configured chain.
+    #[tracing::instrument(skip_all)]
     pub async fn handles_exist(
         &self,
         chain_id: u32,

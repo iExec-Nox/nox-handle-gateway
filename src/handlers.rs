@@ -17,13 +17,16 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{TimeZone, Utc};
 use futures_util::future::join_all;
+use opentelemetry::global;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, warn};
+use tracing::{Instrument, debug, error, info, warn};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::application::AppState;
 use crate::error::AppError;
 use crate::kms::KmsClient;
+use crate::observability::HeaderExtractor;
 use crate::repository::{HandleEntry, HandleEntryWithTag, HandleMetadata, RepositoryError};
 use crate::types::{DataAccessAuthorization, DecryptionProof, Handle, HandleProof, SolidityType};
 use crate::validation::{chain_id_from_handle, decode_and_validate_value, parse_handle};
@@ -657,6 +660,15 @@ pub async fn get_operand_handles(
     Query(query_params): Query<QueryParams>,
     headers: HeaderMap,
 ) -> Result<Json<ComputeOperandResponse>, AppError> {
+    let span = tracing::info_span!("get_operand_handles");
+    if state.config.otel.enabled {
+        let parent_cx = global::get_text_map_propagator(|propagator| {
+            propagator.extract(&HeaderExtractor(&headers))
+        });
+        span.set_parent(parent_cx).expect("should work");
+    }
+    let _ = span.enter();
+
     let salt = extract_salt(query_params.salt)?;
     let token_bytes = extract_authorization(headers)?;
     let authorization: ComputeOperandRequest =
@@ -689,6 +701,7 @@ pub async fn get_operand_handles(
     let operand_handles: Vec<HandleEntry> = state
         .repository
         .read_handles(chain_id, &compute_request.operands)
+        .instrument(span.clone())
         .await
         .map_err(|e| match e {
             RepositoryError::InvalidHandle { reason } => AppError::BadRequest(reason),
@@ -726,6 +739,7 @@ pub async fn get_operand_handles(
                 chain_id,
             )
         }))
+        .instrument(span)
         .await
         .into_iter()
         .filter_map(Result::ok)
@@ -761,6 +775,7 @@ pub async fn get_operand_handles(
     Ok(Json(ComputeOperandResponse { payload, signature }))
 }
 
+#[tracing::instrument(skip_all)]
 async fn get_crypto_material_for_entry(
     kms_client: KmsClient,
     entry: &HandleEntry,
@@ -802,6 +817,15 @@ pub async fn publish_results(
     headers: HeaderMap,
     Json(handles): Json<Vec<HandleEntryWithTag>>,
 ) -> Result<Json<ComputeResultResponse>, AppError> {
+    let span = tracing::info_span!("publish_results_request");
+    if state.config.otel.enabled {
+        let parent_cx = global::get_text_map_propagator(|propagator| {
+            propagator.extract(&HeaderExtractor(&headers))
+        });
+        span.set_parent(parent_cx).expect("should work");
+    }
+    let _ = span.enter();
+
     let salt = extract_salt(query_params.salt)?;
     let token_bytes = extract_authorization(headers)?;
     let authorization: ComputeResultRequest =
@@ -842,6 +866,7 @@ pub async fn publish_results(
             &compute_result.transactionHash,
             &compute_result.caller.to_string(),
         )
+        .instrument(span)
         .await?;
 
     let payload = ResultPublishingReport {
@@ -894,6 +919,9 @@ pub async fn handle_status(
     Query(query_params): Query<QueryParams>,
     Json(request): Json<HandleStatusRequest>,
 ) -> Result<Json<HandleStatusReportResponse>, AppError> {
+    let span = tracing::info_span!("publish_results_request");
+    let _ = span.enter();
+
     let salt = extract_salt(query_params.salt)?;
     info!(count = request.handles.len(), "handle status request");
     if request.handles.is_empty() {
@@ -921,6 +949,7 @@ pub async fn handle_status(
     let exists_map = state
         .repository
         .handles_exist(chain_id, &request.handles)
+        .instrument(span)
         .await?;
     let statuses: Vec<HandleResolution> = request
         .handles

@@ -47,6 +47,7 @@ pub struct Config {
     #[serde(default = "default_s3_max_handles_per_request")]
     #[validate(range(min = 1))]
     pub s3_max_handles_per_request: usize,
+    pub otel: OtelConfig,
 }
 
 /// HTTP server bind configuration.
@@ -260,6 +261,12 @@ where
             })
         })
         .collect()
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct OtelConfig {
+    pub enabled: bool,
+    pub url: String,
 }
 
 impl Config {

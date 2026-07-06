@@ -258,6 +258,7 @@ impl BucketRepository {
     /// For the provided handle, [`Self::head_handle`] is called to check if it exists in S3.
     /// The handle is created if it does not exist, the returned `handle-value-tag` metadata is checked otherwise.
     /// If the metadata value is the same, the handle has already been reported, an error is reported otherwise.
+    #[tracing::instrument(skip_all)]
     async fn create_handle_if_missing(
         &self,
         entry_with_tag: &HandleEntryWithTag,
@@ -328,6 +329,7 @@ impl BucketRepository {
     /// Returns `Ok(Some(tag))` if the key exists, where `tag` is the stored
     /// `"handle-value-tag"` metadata value.
     /// Any non-404 S3 error propagates as `Err(S3Error::S3Operation)`.
+    #[tracing::instrument(skip_all)]
     async fn head_handle(&self, key: &str) -> Result<Option<String>, S3Error> {
         match self
             .client
@@ -367,6 +369,7 @@ impl BucketRepository {
     /// `s3_max_concurrent_requests` semaphore. Always returns `Ok(PublishSummary)`
     /// for business-level outcomes. S3 infrastructure errors (network, permissions)
     /// and invalid handle bytes propagate as `Err(S3Error::S3Operation)`.
+    #[tracing::instrument(skip_all)]
     pub async fn create_handles(
         &self,
         entries: Vec<HandleEntryWithTag>,
@@ -415,6 +418,7 @@ impl BucketRepository {
     /// Fetches and deserializes a single handle entry by its S3 key.
     ///
     /// Returns [`S3Error::NotFound`] if the key does not exist.
+    #[tracing::instrument(skip_all)]
     pub async fn fetch_handle(&self, handle: &str) -> Result<HandleEntry, S3Error> {
         let response = self
             .client
@@ -453,6 +457,7 @@ impl BucketRepository {
     /// global `s3_max_concurrent_requests` semaphore. Missing handles are
     /// omitted from the result rather than producing an error. Any other S3
     /// error (network, permissions) is propagated immediately.
+    #[tracing::instrument(skip_all)]
     pub async fn read_handles(&self, ids: &[String]) -> Result<Vec<HandleEntry>, S3Error> {
         let mut results = Vec::with_capacity(ids.len());
         let repo = self.clone();
@@ -488,6 +493,7 @@ impl BucketRepository {
     /// Dispatches HEAD requests for every key concurrently, throttled by the
     /// global `s3_max_concurrent_requests` semaphore. Any S3 error other than
     /// 404 is propagated immediately.
+    #[tracing::instrument(skip_all)]
     pub async fn handles_exist(&self, ids: &[String]) -> Result<HashMap<String, bool>, S3Error> {
         let results = join_all(ids.iter().map(|id| {
             let repo = self.clone();
