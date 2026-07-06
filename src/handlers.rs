@@ -443,6 +443,7 @@ pub async fn public_decrypt(
     let encrypted_shared_secret = state
         .kms_client
         .get_encrypted_shared_secret(
+            &handle,
             &entry.public_key,
             &state.crypto_svc.rsa_public_key,
             &state.signers[&chain_id],
@@ -768,15 +769,14 @@ async fn get_crypto_material_for_entry(
     chain_id: u32,
 ) -> Result<HandleCryptoMaterial, AppError> {
     let encrypted_shared_secret = kms_client
-        .get_encrypted_shared_secret(&entry.public_key, rsa_public_key, signer, chain_id)
+        .get_encrypted_shared_secret(
+            &entry.handle,
+            &entry.public_key,
+            rsa_public_key,
+            signer,
+            chain_id,
+        )
         .await?;
-    info!(
-        handle = entry.handle,
-        ciphertext = entry.ciphertext,
-        encrypted_shared_secret = encrypted_shared_secret,
-        iv = entry.nonce,
-        "handle crypto material"
-    );
     Ok(HandleCryptoMaterial {
         handle: entry.handle.clone(),
         ciphertext: entry.ciphertext.clone(),

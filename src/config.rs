@@ -24,7 +24,7 @@ use validator::{Validate, ValidationError};
 /// Required without defaults: `chains` (at least one entry), `runner_address`
 /// (non-zero), `kms.signer_address` (non-zero), and every `chains[*]`
 /// sub-field except S3 tuning knobs.
-#[derive(Debug, Clone, Deserialize, Validate)]
+#[derive(Clone, Deserialize, Validate)]
 #[validate(schema(function = "validate_non_empty_chains"))]
 #[validate(schema(function = "validate_default_chain_id"))]
 pub struct Config {
@@ -61,7 +61,7 @@ pub struct Config {
 /// HTTP token syntax (RFC 7230) causes a hard error at startup. Typos that are
 /// valid tokens (e.g. `"authoriation"`) parse successfully and surface only as
 /// CORS preflight rejections at runtime.
-#[derive(Debug, Clone, Deserialize, Validate)]
+#[derive(Clone, Deserialize, Validate)]
 pub struct ServerConfig {
     #[validate(length(min = 1))]
     pub host: String,
@@ -76,7 +76,7 @@ pub struct ServerConfig {
 /// One entry per configured chain ID under `NOX_HANDLE_GATEWAY_CHAINS__{chain_id}__*`.
 /// Duplicating values across chains (e.g. the same `wallet_key`) is intentional —
 /// it supports both single-key and per-chain-key deployments without special-casing.
-#[derive(Debug, Clone, Deserialize, Validate)]
+#[derive(Clone, Deserialize, Validate)]
 pub struct PerChainConfig {
     #[serde(with = "humantime_serde", default = "default_rpc_call_timeout")]
     #[validate(custom(function = "validate_timeout"))]
@@ -128,7 +128,7 @@ impl PerChainConfig {
 /// written on each stored handle and whether the startup bucket check verifies
 /// that Object Lock is active. Set to `false` for buckets where Object Lock is
 /// not configured (e.g. the Sepolia S3 bucket).
-#[derive(Debug, Clone, Deserialize, Validate)]
+#[derive(Clone, Deserialize, Validate)]
 pub struct S3Config {
     #[validate(length(min = 1))]
     pub access_key: String,
@@ -152,7 +152,7 @@ pub struct S3Config {
 /// `url` defaults to `http://localhost:9000`. `signer_address` has no default
 /// and must be non-zero — it is the expected EIP-712 signer for KMS responses
 /// and is checked against on each delegate call.
-#[derive(Clone, Debug, Deserialize, Validate)]
+#[derive(Clone, Deserialize, Validate)]
 pub struct KmsConfig {
     #[validate(url)]
     pub url: String,
@@ -297,8 +297,6 @@ impl Config {
             )
             .add_source(EnvironmentSecretFile::with_prefix("NOX_HANDLE_GATEWAY").separator("_"))
             .build()?;
-
-        debug!("Configuration loaded: {config:#?}");
         config.try_deserialize()
     }
 

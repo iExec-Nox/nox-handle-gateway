@@ -11,6 +11,7 @@ use alloy::{
 use k256::PublicKey;
 use reqwest::{Client, Url};
 use thiserror::Error;
+use tracing::error;
 
 sol! {
     /// On-chain interface for ACL checks and KMS public key retrieval.
@@ -33,6 +34,8 @@ sol! {
 /// Errors returned by [`NoxClient`] operations.
 #[derive(Debug, Error)]
 pub enum RpcError {
+    #[error("ACL call failure: {0}")]
+    AclCallFailure(String),
     #[error(transparent)]
     CallFailure(alloy::contract::Error),
     #[error("Invalid KMS public key: {0}")]
@@ -105,8 +108,9 @@ impl NoxClient {
 
     /// Verify that `viewer` has read access to `handle` on-chain.
     ///
-    /// Calls `isViewer(handle, viewer)` on the NoxCompute contract. Returns
-    /// `Ok(true)` when access is granted, `Ok(false)` when it is not. Returns [`RpcError::CallFailure`] if the RPC node is unreachable or
+    /// Calls `isViewer(handle, viewer)` on the NoxCompute contract.
+    /// Returns `Ok(true)` when access is granted, `Ok(false)` when it is not.
+    /// Returns [`RpcError::AclCallFailure`] if the RPC node is unreachable or
     /// the call fails for any transport reason.
     pub async fn check_access(&self, handle: B256, viewer: Address) -> Result<bool, RpcError> {
         let is_viewer = self
@@ -114,34 +118,47 @@ impl NoxClient {
             .isViewer(handle, viewer)
             .call()
             .await
-            .map_err(RpcError::CallFailure)?;
+            .inspect_err(|e| {
+                error!("isViewer RPC call failed for handle {handle} and viewer {viewer}: {e}")
+            })
+            .map_err(|_| {
+                RpcError::AclCallFailure(format!(
+                    "isViewer RPC call failed for handle {handle} and viewer {viewer}"
+                ))
+            })?;
         Ok(is_viewer)
     }
 
     /// Verify that `handle` is marked as publicly decryptable on-chain.
     ///
-    /// Calls `isPubliclyDecryptable(handle)` on the NoxCompute contract. Returns
-    /// `Ok(true)` when the handle is publicly decryptable, `Ok(false)` when it is not.
-    /// Returns [`RpcError::CallFailure`] if the RPC node is unreachable or the call fails for any transport reason.
+    /// Calls `isPubliclyDecryptable(handle)` on the NoxCompute contract.
+    /// Returns `Ok(true)` when the handle is publicly decryptable, `Ok(false)` when it is not.
+    /// Returns [`RpcError::AclCallFailure`] if the RPC node is unreachable or
+    /// the call fails for any transport reason.
     pub async fn is_publicly_decryptable(&self, handle: B256) -> Result<bool, RpcError> {
         let is_public = self
             .contract
             .isPubliclyDecryptable(handle)
             .call()
             .await
-            .map_err(RpcError::CallFailure)?;
+            .inspect_err(|e| {
+                error!("isPubliclyDecryptable RPC call failed for handle {handle}: {e}")
+            })
+            .map_err(|_| {
+                RpcError::AclCallFailure(format!(
+                    "isPubliclyDecryptable RPC call failed for handle {handle}"
+                ))
+            })?;
         Ok(is_public)
     }
 
     /// Verify an ERC-1271 signature against a Smart Account contract at `address`.
     ///
-    /// Calls `isValidSignature(hash, signature)` on the contract deployed at
-    /// `address`. Returns `Ok(true)` if the contract returns the ERC-1271 magic
-    /// value (`0x1626ba7e`). Returns `Ok(false)` if the contract returns any other value. Returns
-    /// [`RpcError::CallFailure`] if the call itself fails
-    /// for any reason (transport error, revert, ABI mismatch, contract not
-    /// deployed, …), forwarding the raw alloy error transparently so no
-    /// information is lost.
+    /// Calls `isValidSignature(hash, signature)` on the contract deployed at `address`.
+    /// Returns `Ok(true)` if the contract returns the ERC-1271 magic value (`0x1626ba7e`).
+    /// Returns `Ok(false)` if the contract returns any other value.
+    /// Returns [`RpcError::AclCallFailure`] if the call itself fails
+    /// for any reason (transport error, revert, ABI mismatch, contract not deployed, …).
     pub async fn verify_erc1271(
         &self,
         hash: B256,
@@ -164,7 +181,12 @@ impl NoxClient {
             Err(alloy::contract::Error::TransportError(
                 alloy::transports::RpcError::ErrorResp(_),
             )) => Ok(false), // when called contract reverts (e.g. due to invalid signature)
-            Err(e) => Err(RpcError::CallFailure(e)),
+            Err(e) => {
+                error!("ERC-1271 isValidSignature RPC call failed for address {address}: {e}");
+                Err(RpcError::AclCallFailure(format!(
+                    "ERC-1271 isValidSignature RPC call failed for address {address}"
+                )))
+            }
         }
     }
 }
