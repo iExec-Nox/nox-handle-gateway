@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, error, info};
 
+use crate::config::KmsConfig;
 use crate::types::{
     DelegateAuthorization, DelegateResponseProof, EIP_712_DOMAIN_VERSION,
     PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME,
@@ -73,15 +74,19 @@ impl KmsClient {
     /// `public_key` is the KMS EC public key fetched on-chain from NoxCompute.
     /// `kms_signer_address` is the Ethereum address whose EIP-712 signature must
     /// appear on every delegate response.
-    pub fn new(base_url: String, kms_signer_address: Address) -> Result<Self, Error> {
-        let client = Client::builder().build().map_err(Error::ClientBuild)?;
+    pub fn new(config: &KmsConfig) -> Result<Self, Error> {
+        let client = Client::builder()
+            .connect_timeout(config.connect_timeout)
+            .timeout(config.timeout)
+            .build()
+            .map_err(Error::ClientBuild)?;
 
-        info!(kms_signer_address = %kms_signer_address, "KMS client initialized");
+        info!(kms_signer_address = %config.signer_address, "KMS client initialized");
 
         Ok(Self {
             client,
-            base_url: base_url.trim_end_matches('/').to_string(),
-            kms_signer_address,
+            base_url: config.url.trim_end_matches('/').to_string(),
+            kms_signer_address: config.signer_address,
         })
     }
 
@@ -92,6 +97,7 @@ impl KmsClient {
     /// expected signer address.
     pub async fn get_encrypted_shared_secret(
         &self,
+        handle: &str,
         ephemeral_pub_key: &str,
         target_pub_key: &str,
         signer: &PrivateKeySigner,
@@ -99,8 +105,13 @@ impl KmsClient {
     ) -> Result<String, Error> {
         let url = format!("{}/v0/delegate", self.base_url);
 
-        let authorization =
-            self.build_delegate_authorization(ephemeral_pub_key, target_pub_key, signer, chain_id)?;
+        let authorization = self.build_delegate_authorization(
+            handle,
+            ephemeral_pub_key,
+            target_pub_key,
+            signer,
+            chain_id,
+        )?;
 
         info!(
             ephemeral_pub_key = %ephemeral_pub_key,
@@ -132,14 +143,17 @@ impl KmsClient {
         if let Err(err) = response.error_for_status_ref() {
             let status = response.status();
             let error_body = response.text().await?;
-            error!("KMS delegate error {status}: {error_body}");
-            return Err(Error::InvalidResponse(err.to_string()));
+            error!("KMS delegate error: {err} {error_body}");
+            return Err(Error::InvalidResponse(format!(
+                "delegate call failed with status {status}"
+            )));
         }
 
         let data = response
             .json::<KmsDelegateResponse>()
             .await
-            .map_err(|e| Error::InvalidResponse(e.to_string()))?;
+            .inspect_err(|e| error!("Failed to deserialize response: {e}"))
+            .map_err(|_| Error::InvalidResponse("failed to deserialize response".to_string()))?;
 
         self.verify_delegate_response(&data, chain_id, salt)?;
 
@@ -192,6 +206,7 @@ impl KmsClient {
     /// Returns the hex-encoded signature to be sent as the `Authorization: Bearer` header.
     fn build_delegate_authorization(
         &self,
+        handle: &str,
         ephemeral_pub_key: &str,
         target_pub_key: &str,
         signer: &PrivateKeySigner,
@@ -210,7 +225,12 @@ impl KmsClient {
 
         let signature = signer
             .sign_typed_data_sync(&auth, &domain)
-            .map_err(|e| Error::Signing(e.to_string()))?;
+            .inspect_err(|e| error!("failed to prepare KMS authorization: {e}"))
+            .map_err(|_| {
+                Error::Signing(format!(
+                    "failed to prepare KMS authorization for {handle} on chain {chain_id}"
+                ))
+            })?;
 
         Ok(hex::encode_prefixed(signature.as_bytes()))
     }

@@ -1,10 +1,17 @@
+//! Module implementing interactions with a NoxCompute Smart Contract instance.
+
+use std::time::Duration;
+
 use alloy::{
     primitives::{Address, B256, Bytes, FixedBytes},
     providers::RootProvider,
+    rpc::client::RpcClient,
     sol,
 };
 use k256::PublicKey;
+use reqwest::{Client, Url};
 use thiserror::Error;
+use tracing::error;
 
 sol! {
     /// On-chain interface for ACL checks and KMS public key retrieval.
@@ -27,18 +34,14 @@ sol! {
 /// Errors returned by [`NoxClient`] operations.
 #[derive(Debug, Error)]
 pub enum RpcError {
-    #[error("Access denied: not a viewer")]
-    AccessDenied,
+    #[error("ACL call failure: {0}")]
+    AclCallFailure(String),
     #[error(transparent)]
     CallFailure(alloy::contract::Error),
     #[error("Invalid KMS public key: {0}")]
     InvalidKey(String),
-    #[error("ERC-1271: invalid signature (returned {0})")]
-    InvalidSignature(FixedBytes<4>),
     #[error("RPC provider error: {0}")]
     ProviderError(String),
-    #[error(transparent)]
-    SmartWalletSignatureNotVerified(alloy::contract::Error),
 }
 
 /// Ethereum RPC client for on-chain reads against the NoxCompute contract.
@@ -57,11 +60,21 @@ impl NoxClient {
     /// Connects to the Ethereum node at `rpc_url` and wraps the `INoxCompute`
     /// contract at `contract_address`. Returns [`RpcError::ProviderError`] if
     /// the connection fails.
-    pub async fn new(rpc_url: &str, contract_address: Address) -> Result<Self, RpcError> {
-        let trimmed_rpc_url = rpc_url.trim_end_matches('/');
-        let provider = RootProvider::connect(trimmed_rpc_url)
-            .await
+    pub async fn new(
+        rpc_url: &str,
+        call_timeout: Duration,
+        connect_timeout: Duration,
+        contract_address: Address,
+    ) -> Result<Self, RpcError> {
+        let rpc_url = Url::parse(rpc_url.trim_end_matches('/'))
             .map_err(|e| RpcError::ProviderError(e.to_string()))?;
+        let client = Client::builder()
+            .connect_timeout(connect_timeout)
+            .timeout(call_timeout)
+            .build()
+            .map_err(|e| RpcError::ProviderError(e.to_string()))?;
+        let rpc_client = RpcClient::new_http_with_client(client, rpc_url);
+        let provider = RootProvider::new(rpc_client);
         let contract = INoxCompute::new(contract_address, provider);
         Ok(Self { contract })
     }
@@ -95,76 +108,185 @@ impl NoxClient {
 
     /// Verify that `viewer` has read access to `handle` on-chain.
     ///
-    /// Calls `isViewer(handle, viewer)` on the NoxCompute contract. Returns
-    /// `Ok(())` when access is granted, [`RpcError::AccessDenied`] when it is
-    /// not. Returns [`RpcError::CallFailure`] if the RPC node is unreachable or
+    /// Calls `isViewer(handle, viewer)` on the NoxCompute contract.
+    /// Returns `Ok(true)` when access is granted, `Ok(false)` when it is not.
+    /// Returns [`RpcError::AclCallFailure`] if the RPC node is unreachable or
     /// the call fails for any transport reason.
-    pub async fn check_access(&self, handle: B256, viewer: Address) -> Result<(), RpcError> {
+    pub async fn check_access(&self, handle: B256, viewer: Address) -> Result<bool, RpcError> {
         let is_viewer = self
             .contract
             .isViewer(handle, viewer)
             .call()
             .await
-            .map_err(RpcError::CallFailure)?;
-        if is_viewer {
-            Ok(())
-        } else {
-            Err(RpcError::AccessDenied)
-        }
+            .inspect_err(|e| {
+                error!("isViewer RPC call failed for handle {handle} and viewer {viewer}: {e}")
+            })
+            .map_err(|_| {
+                RpcError::AclCallFailure(format!(
+                    "isViewer RPC call failed for handle {handle} and viewer {viewer}"
+                ))
+            })?;
+        Ok(is_viewer)
     }
 
     /// Verify that `handle` is marked as publicly decryptable on-chain.
     ///
-    /// Calls `isPubliclyDecryptable(handle)` on the NoxCompute contract. Returns
-    /// `Ok(())` when the handle is publicly decryptable, [`RpcError::AccessDenied`]
-    /// when it is not. Returns [`RpcError::CallFailure`] if the RPC node is
-    /// unreachable or the call fails for any transport reason.
-    pub async fn is_publicly_decryptable(&self, handle: B256) -> Result<(), RpcError> {
+    /// Calls `isPubliclyDecryptable(handle)` on the NoxCompute contract.
+    /// Returns `Ok(true)` when the handle is publicly decryptable, `Ok(false)` when it is not.
+    /// Returns [`RpcError::AclCallFailure`] if the RPC node is unreachable or
+    /// the call fails for any transport reason.
+    pub async fn is_publicly_decryptable(&self, handle: B256) -> Result<bool, RpcError> {
         let is_public = self
             .contract
             .isPubliclyDecryptable(handle)
             .call()
             .await
-            .map_err(RpcError::CallFailure)?;
-        if is_public {
-            Ok(())
-        } else {
-            Err(RpcError::AccessDenied)
-        }
+            .inspect_err(|e| {
+                error!("isPubliclyDecryptable RPC call failed for handle {handle}: {e}")
+            })
+            .map_err(|_| {
+                RpcError::AclCallFailure(format!(
+                    "isPubliclyDecryptable RPC call failed for handle {handle}"
+                ))
+            })?;
+        Ok(is_public)
     }
 
     /// Verify an ERC-1271 signature against a Smart Account contract at `address`.
     ///
-    /// Calls `isValidSignature(hash, signature)` on the contract deployed at
-    /// `address`. Returns `Ok(())` if the contract returns the ERC-1271 magic
-    /// value (`0x1626ba7e`). Returns [`RpcError::InvalidSignature`] if the
-    /// contract returns any other value. Returns
-    /// [`RpcError::SmartWalletSignatureNotVerified`] if the call itself fails
-    /// for any reason (transport error, revert, ABI mismatch, contract not
-    /// deployed, …), forwarding the raw alloy error transparently so no
-    /// information is lost. This catch-all is intentional — error patterns will
-    /// be refined into dedicated variants once observed in production.
+    /// Calls `isValidSignature(hash, signature)` on the contract deployed at `address`.
+    /// Returns `Ok(true)` if the contract returns the ERC-1271 magic value (`0x1626ba7e`).
+    /// Returns `Ok(false)` if the contract returns any other value.
+    /// Returns [`RpcError::AclCallFailure`] if the call itself fails
+    /// for any reason (transport error, revert, ABI mismatch, contract not deployed, …).
     pub async fn verify_erc1271(
         &self,
         hash: B256,
         signature: &[u8],
         address: Address,
-    ) -> Result<(), RpcError> {
+    ) -> Result<bool, RpcError> {
         const MAGIC_VALUE: FixedBytes<4> = FixedBytes([0x16, 0x26, 0xba, 0x7e]);
 
         let provider = self.contract.provider().clone();
         let contract = IERC1271::new(address, provider);
 
-        let result = contract
+        match contract
             .isValidSignature(hash, Bytes::from(signature.to_vec()))
             .call()
             .await
-            .map_err(RpcError::SmartWalletSignatureNotVerified)?;
-
-        if result == MAGIC_VALUE {
-            Ok(())
-        } else {
-            Err(RpcError::InvalidSignature(result))
+        {
+            Ok(MAGIC_VALUE) => Ok(true), // valid ERC-1271 signature
+            Ok(_) => Ok(false),          // call succeeded but signature is invalid
+            Err(alloy::contract::Error::ZeroData(_, _)) => Ok(false), // when called address is not an ERC-1271 contract
+            Err(alloy::contract::Error::TransportError(
+                alloy::transports::RpcError::ErrorResp(_),
+            )) => Ok(false), // when called contract reverts (e.g. due to invalid signature)
+            Err(e) => {
+                error!("ERC-1271 isValidSignature RPC call failed for address {address}: {e}");
+                Err(RpcError::AclCallFailure(format!(
+                    "ERC-1271 isValidSignature RPC call failed for address {address}"
+                )))
+            }
         }
+    }
+}
+
+#[cfg(test)]
+/// Integration tests for ERC1271 signature verification against the Arbitrum Sepolia state using a third-party RPC node.
+/// These tests are ignored by default, run them with `cargo test -- --ignored`.
+mod verify_erc1271_tests {
+    use super::*;
+    use crate::config::{default_rpc_call_timeout, default_rpc_connect_timeout};
+    use alloy::{
+        hex,
+        primitives::{address, b256},
+    };
+
+    /// RPC node for Arbitrum Sepolia, any RPC node that supports Arbitrum Sepolia should work, this one is operated by a third party and may break.
+    const RPC_URL: &str = "https://arbitrum-sepolia.drpc.org";
+    /// ERC1271 Account contract deployed on Arbitrum Sepolia (https://sepolia.arbiscan.io/address/0xE831ed7F6F79eE19005fF3C5d8Ee3938F1655873)
+    const ERC1271_ACCOUNT_ADDRESS: Address = address!("0xE831ed7F6F79eE19005fF3C5d8Ee3938F1655873");
+    /// dummy EIP712 hash
+    const HASH: B256 = b256!("0xf38604494066bb3860ba01ca14f45b0dea9bb90c28b3cc197c7110b2ee15dd2d");
+    /// valid signature from ERC1271_ACCOUNT_ADDRESS for the above HASH on Arbitrum Sepolia
+    const SIGNATURE: [u8; 66] = hex!(
+        "0x002eb79fe60ed2bf8fdbe98b062be86ce942e7aa2f60a1b34031b4cec0f6c0cfc605a5585d8d2a699c15d35c5fed84c85638a1865e04df49da56a8b9675b49e7481b"
+    );
+
+    async fn make_arbitrum_sepolia_client(rpc_url: &str) -> NoxClient {
+        NoxClient::new(
+            rpc_url,
+            default_rpc_call_timeout(),
+            default_rpc_connect_timeout(),
+            Address::ZERO,
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_verify_erc1271_rpc_error() {
+        let bad_rpc_url: &str = "https://not-an-rpc-node.invalid";
+        let client = make_arbitrum_sepolia_client(bad_rpc_url).await;
+        let result = client
+            .verify_erc1271(HASH, &SIGNATURE, ERC1271_ACCOUNT_ADDRESS)
+            .await;
+        let err = result.expect_err("should fail on invalid RPC URL");
+        assert!(
+            matches!(err, RpcError::CallFailure(_)),
+            "should return CallFailure error on RPC failure"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_verify_erc1271_eoa() {
+        let client = make_arbitrum_sepolia_client(RPC_URL).await;
+        let eoa = Address::ZERO;
+        let result = client.verify_erc1271(HASH, &SIGNATURE, eoa).await;
+        let is_valid = result.expect("should not fail on EOA");
+        assert!(!is_valid, "should return false for EOA");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_verify_erc1271_non_erc1271_contract() {
+        let client = make_arbitrum_sepolia_client(RPC_URL).await;
+        let non_erc1271_contract = address!("0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d"); // USDC contract on Arbitrum Sepolia, not an ERC1271 contract
+        let result = client
+            .verify_erc1271(HASH, &SIGNATURE, non_erc1271_contract)
+            .await;
+        let is_valid = result.expect("should not fail on non-ERC1271 contract");
+        assert!(!is_valid, "should return false for non-ERC1271 contract");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_verify_erc1271_erc1271_contract_invalid_signature() {
+        let client = make_arbitrum_sepolia_client(RPC_URL).await;
+        let invalid_signature = [0u8; 65]; // invalid signature
+        let result = client
+            .verify_erc1271(HASH, &invalid_signature, ERC1271_ACCOUNT_ADDRESS)
+            .await;
+        let is_valid = result.expect("should not fail on ERC1271 contract");
+        assert!(
+            !is_valid,
+            "should return false for ERC1271 contract with invalid signature"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_verify_erc1271_erc1271_contract_valid_signature() {
+        let client = make_arbitrum_sepolia_client(RPC_URL).await;
+        let result = client
+            .verify_erc1271(HASH, &SIGNATURE, ERC1271_ACCOUNT_ADDRESS)
+            .await;
+        let is_valid = result.expect("should not fail on ERC1271 contract");
+        assert!(
+            is_valid,
+            "should return true for ERC1271 contract with valid signature"
+        );
     }
 }

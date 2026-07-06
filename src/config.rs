@@ -1,4 +1,6 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::time::Duration;
 
 use alloy::{
     primitives::{Address, hex},
@@ -22,7 +24,7 @@ use validator::{Validate, ValidationError};
 /// Required without defaults: `chains` (at least one entry), `runner_address`
 /// (non-zero), `kms.signer_address` (non-zero), and every `chains[*]`
 /// sub-field except S3 tuning knobs.
-#[derive(Debug, Clone, Deserialize, Validate)]
+#[derive(Clone, Deserialize, Validate)]
 #[validate(schema(function = "validate_non_empty_chains"))]
 pub struct Config {
     #[validate(nested)]
@@ -53,7 +55,7 @@ pub struct Config {
 /// HTTP token syntax (RFC 7230) causes a hard error at startup. Typos that are
 /// valid tokens (e.g. `"authoriation"`) parse successfully and surface only as
 /// CORS preflight rejections at runtime.
-#[derive(Debug, Clone, Deserialize, Validate)]
+#[derive(Clone, Deserialize, Validate)]
 pub struct ServerConfig {
     #[validate(length(min = 1))]
     pub host: String,
@@ -68,8 +70,14 @@ pub struct ServerConfig {
 /// One entry per configured chain ID under `NOX_HANDLE_GATEWAY_CHAINS__{chain_id}__*`.
 /// Duplicating values across chains (e.g. the same `wallet_key`) is intentional —
 /// it supports both single-key and per-chain-key deployments without special-casing.
-#[derive(Debug, Clone, Deserialize, Validate)]
+#[derive(Clone, Deserialize, Validate)]
 pub struct PerChainConfig {
+    #[serde(with = "humantime_serde", default = "default_rpc_call_timeout")]
+    #[validate(custom(function = "validate_timeout"))]
+    pub call_timeout: Duration,
+    #[serde(with = "humantime_serde", default = "default_rpc_connect_timeout")]
+    #[validate(custom(function = "validate_timeout"))]
+    pub connect_timeout: Duration,
     #[validate(custom(function = "validate_non_zero_address"))]
     pub nox_compute_contract_address: Address,
     #[validate(url)]
@@ -114,7 +122,7 @@ impl PerChainConfig {
 /// written on each stored handle and whether the startup bucket check verifies
 /// that Object Lock is active. Set to `false` for buckets where Object Lock is
 /// not configured (e.g. the Sepolia S3 bucket).
-#[derive(Debug, Clone, Deserialize, Validate)]
+#[derive(Clone, Deserialize, Validate)]
 pub struct S3Config {
     #[validate(length(min = 1))]
     pub access_key: String,
@@ -138,12 +146,26 @@ pub struct S3Config {
 /// `url` defaults to `http://localhost:9000`. `signer_address` has no default
 /// and must be non-zero — it is the expected EIP-712 signer for KMS responses
 /// and is checked against on each delegate call.
-#[derive(Clone, Debug, Deserialize, Validate)]
+#[derive(Clone, Deserialize, Validate)]
 pub struct KmsConfig {
     #[validate(url)]
     pub url: String,
+    #[serde(with = "humantime_serde")]
+    #[validate(custom(function = "validate_timeout"))]
+    pub connect_timeout: Duration,
+    #[serde(with = "humantime_serde")]
+    #[validate(custom(function = "validate_timeout"))]
+    pub timeout: Duration,
     #[validate(custom(function = "validate_non_zero_address"))]
     pub signer_address: Address,
+}
+
+pub(crate) fn default_rpc_call_timeout() -> Duration {
+    Duration::from_secs(8)
+}
+
+pub(crate) fn default_rpc_connect_timeout() -> Duration {
+    Duration::from_secs(5)
 }
 
 /// Default S3 operation timeout in seconds.
@@ -178,6 +200,21 @@ fn validate_non_empty_chains(cfg: &Config) -> Result<(), ValidationError> {
 fn validate_non_zero_address(address: &Address) -> Result<(), ValidationError> {
     if *address == Address::ZERO {
         return Err(ValidationError::new("address should not be zero address"));
+    }
+    Ok(())
+}
+
+/// Validate a timeout is not zero and is less than 60 seconds.
+fn validate_timeout(value: &Duration) -> Result<(), ValidationError> {
+    if *value == Duration::ZERO {
+        let err =
+            ValidationError::new("timeout_zero").with_message(Cow::from("must be greater than 0s"));
+        return Err(err);
+    }
+    if *value > Duration::from_secs(60) {
+        let err = ValidationError::new("timeout_too_large")
+            .with_message(Cow::from("must not exceed 60s"));
+        return Err(err);
     }
     Ok(())
 }
@@ -232,6 +269,8 @@ impl Config {
                 vec!["content-type", "authorization"],
             )?
             .set_default("kms.url", "http://localhost:9000")?
+            .set_default("kms.connect_timeout", "3s")?
+            .set_default("kms.timeout", "10s")?
             .set_default("default_chain_id", 421614)?
             .add_source(
                 Environment::with_prefix("NOX_HANDLE_GATEWAY")
@@ -243,8 +282,6 @@ impl Config {
             )
             .add_source(EnvironmentSecretFile::with_prefix("NOX_HANDLE_GATEWAY").separator("_"))
             .build()?;
-
-        debug!("Configuration loaded: {config:#?}");
         config.try_deserialize()
     }
 
@@ -253,5 +290,158 @@ impl Config {
         let addr = format!("{}:{}", self.server.host, self.server.port);
         debug!("Binding address: {}", addr);
         addr
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+    use validator::ValidationErrors;
+
+    #[test]
+    fn check_config() {
+        temp_env::with_vars(
+            [
+                (
+                    "NOX_HANDLE_GATEWAY_CHAINS__31337__NOX_COMPUTE_CONTRACT_ADDRESS",
+                    Some("0x9c3244fa8F8D46e9f251eda52E759A6D6f47eaC9"),
+                ),
+                (
+                    "NOX_HANDLE_GATEWAY_CHAINS__31337__RPC_URL",
+                    Some("http://localhost:8545"),
+                ),
+                (
+                    "NOX_HANDLE_GATEWAY_CHAINS__31337__S3__ACCESS_KEY",
+                    Some("username"),
+                ),
+                (
+                    "NOX_HANDLE_GATEWAY_CHAINS__31337__S3__SECRET_KEY",
+                    Some("password"),
+                ),
+                (
+                    "NOX_HANDLE_GATEWAY_CHAINS__31337__S3__BUCKET",
+                    Some("bucket"),
+                ),
+                (
+                    "NOX_HANDLE_GATEWAY_CHAINS__31337__S3__REGION",
+                    Some("region"),
+                ),
+                (
+                    "NOX_HANDLE_GATEWAY_CHAINS__31337__WALLET_KEY",
+                    Some("0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
+                ),
+                ("NOX_HANDLE_GATEWAY_DEFAULT_CHAIN_ID", Some("31337")),
+                (
+                    "NOX_HANDLE_GATEWAY_KMS__SIGNER_ADDRESS",
+                    Some("0xD60BB0381d2712863e241F003349591475E0b961"),
+                ),
+                (
+                    "NOX_HANDLE_GATEWAY_RUNNER_ADDRESS",
+                    Some("0x6cf34A6f8295c0478791A58c87CFe6E9e827B220"),
+                ),
+                (
+                    "NOX_HANDLE_GATEWAY_SERVER__CORS_ALLOWED_HEADERS",
+                    Some("a,b"),
+                ),
+            ],
+            || {
+                let config = Config::load().expect("should load");
+                config.validate().expect("should validate");
+                assert_eq!(Duration::from_secs(8), config.chains[&31337].call_timeout);
+                assert_eq!(
+                    Duration::from_secs(5),
+                    config.chains[&31337].connect_timeout
+                );
+                assert_eq!(
+                    Address::from_str("0x9c3244fa8F8D46e9f251eda52E759A6D6f47eaC9").unwrap(),
+                    config.chains[&31337].nox_compute_contract_address
+                );
+                assert_eq!("http://localhost:8545", config.chains[&31337].rpc_url);
+                assert_eq!("username", config.chains[&31337].s3.access_key);
+                assert_eq!("password", config.chains[&31337].s3.secret_key);
+                assert_eq!("bucket", config.chains[&31337].s3.bucket);
+                assert_eq!("region", config.chains[&31337].s3.region);
+                assert_eq!(
+                    "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                    config.chains[&31337].wallet_key
+                );
+                assert_eq!(31337, config.default_chain_id);
+                assert_eq!(
+                    Address::from_str("0xD60BB0381d2712863e241F003349591475E0b961").unwrap(),
+                    config.kms.signer_address
+                );
+                assert_eq!(
+                    Address::from_str("0x6cf34A6f8295c0478791A58c87CFe6E9e827B220").unwrap(),
+                    config.runner_address
+                );
+                assert_eq!(vec!["a", "b"], config.server.cors_allowed_headers);
+            },
+        )
+    }
+
+    #[test]
+    fn check_invalid_config() {
+        temp_env::with_vars(
+            [
+                (
+                    "NOX_HANDLE_GATEWAY_CHAINS__31337__NOX_COMPUTE_CONTRACT_ADDRESS",
+                    Some("0x0000000000000000000000000000000000000000"),
+                ),
+                ("NOX_HANDLE_GATEWAY_CHAINS__31337__RPC_URL", Some("")),
+                ("NOX_HANDLE_GATEWAY_CHAINS__31337__S3__ACCESS_KEY", Some("")),
+                ("NOX_HANDLE_GATEWAY_CHAINS__31337__S3__SECRET_KEY", Some("")),
+                ("NOX_HANDLE_GATEWAY_CHAINS__31337__S3__BUCKET", Some("")),
+                ("NOX_HANDLE_GATEWAY_CHAINS__31337__S3__REGION", Some("")),
+                ("NOX_HANDLE_GATEWAY_CHAINS__31337__WALLET_KEY", Some("0x")),
+                ("NOX_HANDLE_GATEWAY_DEFAULT_CHAIN_ID", Some("65535")),
+                (
+                    "NOX_HANDLE_GATEWAY_KMS__SIGNER_ADDRESS",
+                    Some("0x0000000000000000000000000000000000000000"),
+                ),
+                (
+                    "NOX_HANDLE_GATEWAY_RUNNER_ADDRESS",
+                    Some("0x0000000000000000000000000000000000000000"),
+                ),
+            ],
+            || {
+                let config = Config::load().expect("should load");
+                let result = config.validate();
+                assert!(result.is_err());
+                assert!(ValidationErrors::has_error(&result, "chains"));
+                assert!(ValidationErrors::has_error(&result, "kms"));
+                assert!(ValidationErrors::has_error(&result, "runner_address"));
+            },
+        )
+    }
+
+    #[test]
+    fn check_invalid_chain_config() {
+        let s3_config = S3Config {
+            access_key: "".to_string(),
+            secret_key: "".to_string(),
+            bucket: "".to_string(),
+            endpoint_url: None,
+            object_lock_enabled: false,
+            region: "".to_string(),
+            timeout: 0,
+        };
+        let per_chain_config = PerChainConfig {
+            call_timeout: Duration::from_secs(120),
+            connect_timeout: Duration::from_secs(90),
+            nox_compute_contract_address: Address::ZERO,
+            rpc_url: "".to_string(),
+            s3: s3_config,
+            wallet_key: "".to_string(),
+        };
+        let result = per_chain_config.validate();
+        assert!(ValidationErrors::has_error(&result, "call_timeout"));
+        assert!(ValidationErrors::has_error(&result, "connect_timeout"));
+        assert!(ValidationErrors::has_error(
+            &result,
+            "nox_compute_contract_address"
+        ));
+        assert!(ValidationErrors::has_error(&result, "rpc_url"));
+        assert!(ValidationErrors::has_error(&result, "wallet_key"));
     }
 }

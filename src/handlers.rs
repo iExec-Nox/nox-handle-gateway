@@ -24,7 +24,7 @@ use tracing::{debug, error, info, warn};
 use crate::application::AppState;
 use crate::error::AppError;
 use crate::kms::KmsClient;
-use crate::repository::{HandleEntry, HandleS3Metadata};
+use crate::repository::{HandleEntry, HandleEntryWithTag, HandleMetadata, RepositoryError};
 use crate::types::{DataAccessAuthorization, DecryptionProof, Handle, HandleProof, SolidityType};
 use crate::validation::{chain_id_from_handle, decode_and_validate_value, parse_handle};
 
@@ -151,7 +151,7 @@ pub async fn create_handle(
         nonce: hex::encode_prefixed(ecies_ciphertext.nonce),
     };
 
-    let metadata = HandleS3Metadata {
+    let metadata = HandleMetadata {
         handle: serialized_handle.clone(),
         created_at: Utc::now().naive_utc(),
         chain_id,
@@ -165,7 +165,12 @@ pub async fn create_handle(
     state
         .repository
         .create_handle(chain_id, &entry, &metadata)
-        .await?;
+        .await
+        .map_err(|e| match e {
+            RepositoryError::Conflict(key) => AppError::Conflict(key),
+            RepositoryError::UnknownChain { .. } => AppError::BadRequest(e.to_string()),
+            other => AppError::StorageError(other),
+        })?;
 
     // HandleProof
     let nox_compute_domain = eip712_domain! {
@@ -330,25 +335,35 @@ pub async fn get_handle_crypto_material(
             user = payload.userAddress.to_string(),
             "attempting ERC-1271 fallback",
         );
-        nox_client
+        let is_valid_signature = nox_client
             .verify_erc1271(hash, &signature_bytes, payload.userAddress)
-            .await
-            .map_err(|e| {
-                warn!(
-                    handle,
-                    user = payload.userAddress.to_string(),
-                    "ERC-1271 signature verification failed: {e}",
-                );
-                AppError::Unauthorized("invalid signature".to_string())
-            })?;
+            .await?;
+        if !is_valid_signature {
+            warn!(
+                handle,
+                user = payload.userAddress.to_string(),
+                "ERC-1271 signature is invalid",
+            );
+            return Err(AppError::Unauthorized("invalid signature".to_string()));
+        }
     }
 
     let handle_b256 = parse_handle(&handle)?;
-    nox_client
+    let has_access = nox_client
         .check_access(handle_b256, payload.userAddress)
         .await?;
+    if !has_access {
+        return Err(AppError::AccessDenied("not a viewer".to_string()));
+    }
 
-    let entry = state.repository.fetch_handle(&handle).await?;
+    let entry = state
+        .repository
+        .fetch_handle(&handle)
+        .await
+        .map_err(|e| match e {
+            RepositoryError::NotFound(key) => AppError::NotFound(key),
+            other => AppError::StorageError(other),
+        })?;
 
     info!(handle, "decryption delegation request");
     let crypto_material = get_crypto_material_for_entry(
@@ -403,16 +418,29 @@ pub async fn public_decrypt(
 
     info!(handle = %handle, "public_decrypt query");
 
-    state.nox_clients[&chain_id]
+    let is_public = state.nox_clients[&chain_id]
         .is_publicly_decryptable(handle_b256)
         .await?;
+    if !is_public {
+        return Err(AppError::AccessDenied(
+            "not publicly decryptable".to_string(),
+        ));
+    }
 
-    let entry = state.repository.fetch_handle(&handle).await?;
+    let entry = state
+        .repository
+        .fetch_handle(&handle)
+        .await
+        .map_err(|e| match e {
+            RepositoryError::NotFound(key) => AppError::NotFound(key),
+            other => AppError::StorageError(other),
+        })?;
 
     // KMS delegate → encrypted shared secret
     let encrypted_shared_secret = state
         .kms_client
         .get_encrypted_shared_secret(
+            &handle,
             &entry.public_key,
             &state.crypto_svc.rsa_public_key,
             &state.signers[&chain_id],
@@ -598,20 +626,6 @@ pub struct ComputeResultRequest {
     signature: String,
 }
 
-/// Atomic handle data sent by a known Runner when publishing results.
-///
-/// The `handle_value_tag` field allows to verify if the same handle
-/// has already been published with the same plaintext value.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HandleEntryWithTag {
-    pub handle: String,
-    pub handle_value_tag: String,
-    pub ciphertext: String,
-    pub public_key: String,
-    pub nonce: String,
-}
-
 /// Response sent to the Runner when publishing computation results.
 ///
 /// The response contains [`ResultPublishingReport`] EIP-712 data with its signed hash.
@@ -672,7 +686,11 @@ pub async fn get_operand_handles(
     let operand_handles: Vec<HandleEntry> = state
         .repository
         .read_handles(chain_id, &compute_request.operands)
-        .await?;
+        .await
+        .map_err(|e| match e {
+            RepositoryError::InvalidHandle { reason } => AppError::BadRequest(reason),
+            other => AppError::StorageError(other),
+        })?;
     debug!("operand handles count {}", operand_handles.len());
     if operand_handles.len() != operands_expected_count {
         let found_handles: Vec<String> = operand_handles
@@ -748,15 +766,14 @@ async fn get_crypto_material_for_entry(
     chain_id: u32,
 ) -> Result<HandleCryptoMaterial, AppError> {
     let encrypted_shared_secret = kms_client
-        .get_encrypted_shared_secret(&entry.public_key, rsa_public_key, signer, chain_id)
+        .get_encrypted_shared_secret(
+            &entry.handle,
+            &entry.public_key,
+            rsa_public_key,
+            signer,
+            chain_id,
+        )
         .await?;
-    info!(
-        handle = entry.handle,
-        ciphertext = entry.ciphertext,
-        encrypted_shared_secret = encrypted_shared_secret,
-        iv = entry.nonce,
-        "handle crypto material"
-    );
     Ok(HandleCryptoMaterial {
         handle: entry.handle.clone(),
         ciphertext: entry.ciphertext.clone(),
@@ -775,7 +792,7 @@ async fn get_crypto_material_for_entry(
 ///
 /// The operation will fail with:
 /// - [`AppError::Unauthorized`] if the authorization token cannot be verified.
-/// - [`super::repository::S3Error`] if an error occurs during publishing.
+/// - [`AppError::StorageError`] if an unexpected storage error occurs during publishing.
 pub async fn publish_results(
     State(state): State<AppState>,
     Query(query_params): Query<QueryParams>,
