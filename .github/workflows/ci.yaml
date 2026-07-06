@@ -50,7 +50,13 @@ jobs:
   build-oci-image:
     name: Build OCI image
     needs: prepare
-    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build.yml@docker-build-v3.4.0
+    uses: iExecBlockchainComputing/github-actions-workflows/.github/workflows/docker-build.yml@2fc2921c9527b8e0c3217edecbb828ec75cb610a #workflow state: v3.5.1
+    permissions:
+      contents: read
+      pull-requests: write     # Trivy/Hadolint comments
+      security-events: write   # upload SARIF
+      id-token: write          # Keyless signature (Fulcio)
+      attestations: write      # write SLSA attestation
     with:
       image-name: docker-regis.iex.ec/nox-handle-gateway
       image-tag: ${{ needs.prepare.outputs.image_tag }}
@@ -58,6 +64,8 @@ jobs:
       context: .
       registry: docker-regis.iex.ec
       push: true
+      # SLSA attestation on PR merge or workflow_dispatch on main
+      attest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
       security-scan: true
       security-report: "comment"
       hadolint: true
