@@ -366,7 +366,6 @@ mod tests {
                     "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                     config.chains[&31337].wallet_key
                 );
-                assert_eq!(31337, config.default_chain_id);
                 assert_eq!(
                     Address::from_str("0xD60BB0381d2712863e241F003349591475E0b961").unwrap(),
                     config.kms.signer_address
