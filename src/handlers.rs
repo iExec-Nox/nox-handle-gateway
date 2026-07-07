@@ -13,6 +13,7 @@ use axum::{
     Json,
     extract::{Path, Query, State},
     http::header::HeaderMap,
+    response::{IntoResponse, Response},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{TimeZone, Utc};
@@ -91,20 +92,31 @@ pub async fn create_handle(
     State(state): State<AppState>,
     Query(query_params): Query<QueryParams>,
     Json(request): Json<HandleRequest>,
-) -> Result<Json<SignedResponse<HandleWithProof>>, AppError> {
+) -> Response {
     let chain_id = match query_params.chain_id {
         Some(chain_id) => chain_id,
         None => {
-            return Err(AppError::BadRequest(
-                "Mandatory chain_id query param not provided".to_string(),
-            ));
+            return AppError::BadRequest("Mandatory chain_id query param not provided".to_string())
+                .into_response();
         }
     };
     if !state.verify_chain(chain_id) {
-        return Err(AppError::UnknownChain(chain_id));
+        return AppError::UnknownChain(chain_id).into_response();
     }
+    let salt = match extract_salt(query_params.salt) {
+        Ok(salt) => salt,
+        Err(e) => return e.into_response(),
+    };
+    let result = create_handle_impl(&state, chain_id, request).await;
+    respond(&state.signers[&chain_id], chain_id, salt, result)
+}
+
+async fn create_handle_impl(
+    state: &AppState,
+    chain_id: u32,
+    request: HandleRequest,
+) -> Result<HandleWithProof, AppError> {
     let chain_cfg = &state.config.chains[&chain_id];
-    let salt = extract_salt(query_params.salt)?;
     // Handle
     let plaintext = decode_and_validate_value(&request.value, &request.solidity_type)?;
     let ecies_ciphertext = state.crypto_svc.ecies_encrypt(chain_id, &plaintext)?;
@@ -172,12 +184,10 @@ pub async fn create_handle(
 
     let serialized_handle_proof = proof.to_serialized_bytes(*handle_proof_signature);
 
-    let handle_with_proof = HandleWithProof {
+    Ok(HandleWithProof {
         handle: serialized_handle,
         proof: serialized_handle_proof,
-    };
-    let response = sign_response(&state.signers[&chain_id], chain_id, salt, handle_with_proof)?;
-    Ok(Json(response))
+    })
 }
 
 /// Serve encrypted crypto material for a handle after verifying caller identity and ACL.
@@ -204,12 +214,28 @@ pub async fn get_handle_crypto_material(
     State(state): State<AppState>,
     Query(query_params): Query<QueryParams>,
     headers: HeaderMap,
-) -> Result<Json<SignedResponse<HandleCryptoMaterial>>, AppError> {
-    let salt = extract_salt(query_params.salt)?;
-    let chain_id = chain_id_from_handle(&handle)?;
+) -> Response {
+    let salt = match extract_salt(query_params.salt) {
+        Ok(salt) => salt,
+        Err(e) => return e.into_response(),
+    };
+    let chain_id = match chain_id_from_handle(&handle) {
+        Ok(chain_id) => chain_id,
+        Err(e) => return e.into_response(),
+    };
     if !state.verify_chain(chain_id) {
-        return Err(AppError::UnknownChain(chain_id));
+        return AppError::UnknownChain(chain_id).into_response();
     }
+    let result = get_handle_crypto_material_impl(&state, chain_id, handle, headers).await;
+    respond(&state.signers[&chain_id], chain_id, salt, result)
+}
+
+async fn get_handle_crypto_material_impl(
+    state: &AppState,
+    chain_id: u32,
+    handle: String,
+    headers: HeaderMap,
+) -> Result<HandleCryptoMaterial, AppError> {
     let chain_cfg = &state.config.chains[&chain_id];
     info!(handle = handle, "get_handle_crypto_material query");
     let token_bytes = extract_authorization(headers)?;
@@ -335,16 +361,14 @@ pub async fn get_handle_crypto_material(
         })?;
 
     info!(handle, "decryption delegation request");
-    let crypto_material = get_crypto_material_for_entry(
+    get_crypto_material_for_entry(
         state.kms_client.clone(),
         &entry,
         &payload.encryptionPubKey,
         &state.signers[&chain_id],
         chain_id,
     )
-    .await?;
-    let response = sign_response(&state.signers[&chain_id], chain_id, salt, crypto_material)?;
-    Ok(Json(response))
+    .await
 }
 
 /// Returns a verifiable EIP-712 decryption proof for a publicly decryptable handle.
@@ -366,14 +390,35 @@ pub async fn public_decrypt(
     Path(handle): Path<String>,
     State(state): State<AppState>,
     Query(query_params): Query<QueryParams>,
-) -> Result<Json<SignedResponse<PublicDecryptionResult>>, AppError> {
-    let salt = extract_salt(query_params.salt)?;
-    let handle_b256 = parse_handle(&handle)?;
-    SolidityType::try_from(handle_b256[5])?;
-    let chain_id = chain_id_from_handle(&handle)?;
-    if !state.verify_chain(chain_id) {
-        return Err(AppError::UnknownChain(chain_id));
+) -> Response {
+    let salt = match extract_salt(query_params.salt) {
+        Ok(salt) => salt,
+        Err(e) => return e.into_response(),
+    };
+    let handle_b256 = match parse_handle(&handle) {
+        Ok(h) => h,
+        Err(e) => return e.into_response(),
+    };
+    if let Err(e) = SolidityType::try_from(handle_b256[5]) {
+        return e.into_response();
     }
+    let chain_id = match chain_id_from_handle(&handle) {
+        Ok(chain_id) => chain_id,
+        Err(e) => return e.into_response(),
+    };
+    if !state.verify_chain(chain_id) {
+        return AppError::UnknownChain(chain_id).into_response();
+    }
+    let result = public_decrypt_impl(&state, chain_id, handle_b256, &handle).await;
+    respond(&state.signers[&chain_id], chain_id, salt, result)
+}
+
+async fn public_decrypt_impl(
+    state: &AppState,
+    chain_id: u32,
+    handle_b256: B256,
+    handle: &str,
+) -> Result<PublicDecryptionResult, AppError> {
     let chain_cfg = &state.config.chains[&chain_id];
 
     info!(handle = %handle, "public_decrypt query");
@@ -389,7 +434,7 @@ pub async fn public_decrypt(
 
     let entry = state
         .repository
-        .fetch_handle(&handle)
+        .fetch_handle(handle)
         .await
         .map_err(|e| match e {
             RepositoryError::NotFound(key) => AppError::NotFound(key),
@@ -400,7 +445,7 @@ pub async fn public_decrypt(
     let encrypted_shared_secret = state
         .kms_client
         .get_encrypted_shared_secret(
-            &handle,
+            handle,
             &entry.public_key,
             &state.crypto_svc.rsa_public_key,
             &state.signers[&chain_id],
@@ -436,11 +481,9 @@ pub async fn public_decrypt(
     serialized.extend_from_slice(&signature);
     serialized.extend_from_slice(&decrypted_result);
 
-    let result_payload = PublicDecryptionResult {
+    Ok(PublicDecryptionResult {
         decryptionProof: hex::encode_prefixed(serialized),
-    };
-    let response = sign_response(&state.signers[&chain_id], chain_id, salt, result_payload)?;
-    Ok(Json(response))
+    })
 }
 
 fn format_timestamp(ts: U256) -> String {
@@ -544,6 +587,17 @@ sol! {
     struct HandleStatusReport {
         HandleResolution[] statuses;
     }
+
+    /// EIP-712 outer payload wrapping a sanitized error.
+    ///
+    /// Signed under the Handle Gateway domain (with salt) exactly like a success
+    /// payload, so callers can verify an error response actually originates from
+    /// a known Handle Gateway signer and was not injected en route.
+    #[derive(Serialize)]
+    struct ErrorReport {
+        string code;
+        string message;
+    }
 }
 
 /// Full authorization data to retrieve compute operands from the Handle Gateway.
@@ -584,31 +638,51 @@ pub async fn get_operand_handles(
     State(state): State<AppState>,
     Query(query_params): Query<QueryParams>,
     headers: HeaderMap,
-) -> Result<Json<SignedResponse<ComputeOperands>>, AppError> {
-    let salt = extract_salt(query_params.salt)?;
-    let token_bytes = extract_authorization(headers)?;
-    let authorization: ComputeOperandRequest =
-        serde_json::from_slice(&token_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
-
+) -> Response {
+    let salt = match extract_salt(query_params.salt) {
+        Ok(salt) => salt,
+        Err(e) => return e.into_response(),
+    };
+    let token_bytes = match extract_authorization(headers) {
+        Ok(bytes) => bytes,
+        Err(e) => return e.into_response(),
+    };
+    let authorization: ComputeOperandRequest = match serde_json::from_slice(&token_bytes) {
+        Ok(authorization) => authorization,
+        Err(e) => return AppError::Unauthorized(e.to_string()).into_response(),
+    };
     let compute_request = authorization.payload;
-    let chain_id = u32::try_from(compute_request.chainId).map_err(|_| {
-        AppError::BadRequest(format!("chainId {} overflows u32", compute_request.chainId))
-    })?;
+    let chain_id = match u32::try_from(compute_request.chainId) {
+        Ok(chain_id) => chain_id,
+        Err(_) => {
+            return AppError::BadRequest(format!(
+                "chainId {} overflows u32",
+                compute_request.chainId
+            ))
+            .into_response();
+        }
+    };
     if !state.verify_chain(chain_id) {
-        return Err(AppError::UnknownChain(chain_id));
+        return AppError::UnknownChain(chain_id).into_response();
     }
+    let result =
+        get_operand_handles_impl(&state, chain_id, compute_request, &authorization.signature).await;
+    respond(&state.signers[&chain_id], chain_id, salt, result)
+}
 
+async fn get_operand_handles_impl(
+    state: &AppState,
+    chain_id: u32,
+    compute_request: OperandAccessAuthorization,
+    signature: &str,
+) -> Result<ComputeOperands, AppError> {
     let auth_domain = eip712_domain! {
         name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(chain_id),
     };
     let hash = compute_request.eip712_signing_hash(&auth_domain);
-    recover_and_check_address(
-        &state.config.runner_address,
-        &hash,
-        &authorization.signature,
-    )?;
+    recover_and_check_address(&state.config.runner_address, &hash, signature)?;
 
     debug!("preparing handles for caller {}", compute_request.caller);
 
@@ -676,11 +750,9 @@ pub async fn get_operand_handles(
         );
         return Err(AppError::OperandsNotPrepared);
     }
-    let payload = ComputeOperands {
+    Ok(ComputeOperands {
         operands: operands_crypto_material,
-    };
-    let response = sign_response(&state.signers[&chain_id], chain_id, salt, payload)?;
-    Ok(Json(response))
+    })
 }
 
 async fn get_crypto_material_for_entry(
@@ -723,30 +795,58 @@ pub async fn publish_results(
     Query(query_params): Query<QueryParams>,
     headers: HeaderMap,
     Json(handles): Json<Vec<HandleEntryWithTag>>,
-) -> Result<Json<SignedResponse<ResultPublishingReport>>, AppError> {
-    let salt = extract_salt(query_params.salt)?;
-    let token_bytes = extract_authorization(headers)?;
-    let authorization: ComputeResultRequest =
-        serde_json::from_slice(&token_bytes).map_err(|e| AppError::Unauthorized(e.to_string()))?;
-
+) -> Response {
+    let salt = match extract_salt(query_params.salt) {
+        Ok(salt) => salt,
+        Err(e) => return e.into_response(),
+    };
+    let token_bytes = match extract_authorization(headers) {
+        Ok(bytes) => bytes,
+        Err(e) => return e.into_response(),
+    };
+    let authorization: ComputeResultRequest = match serde_json::from_slice(&token_bytes) {
+        Ok(authorization) => authorization,
+        Err(e) => return AppError::Unauthorized(e.to_string()).into_response(),
+    };
     let compute_result = authorization.payload;
-    let chain_id = u32::try_from(compute_result.chainId).map_err(|_| {
-        AppError::BadRequest(format!("chainId {} overflows u32", compute_result.chainId))
-    })?;
+    let chain_id = match u32::try_from(compute_result.chainId) {
+        Ok(chain_id) => chain_id,
+        Err(_) => {
+            return AppError::BadRequest(format!(
+                "chainId {} overflows u32",
+                compute_result.chainId
+            ))
+            .into_response();
+        }
+    };
     if !state.verify_chain(chain_id) {
-        return Err(AppError::UnknownChain(chain_id));
+        return AppError::UnknownChain(chain_id).into_response();
     }
+    let result = publish_results_impl(
+        &state,
+        chain_id,
+        compute_result,
+        &authorization.signature,
+        handles,
+    )
+    .await;
+    respond(&state.signers[&chain_id], chain_id, salt, result)
+}
+
+async fn publish_results_impl(
+    state: &AppState,
+    chain_id: u32,
+    compute_result: ResultPublishingAuthorization,
+    signature: &str,
+    handles: Vec<HandleEntryWithTag>,
+) -> Result<ResultPublishingReport, AppError> {
     let auth_domain = eip712_domain! {
         name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
         version: "1",
         chain_id: u64::from(chain_id),
     };
     let hash = compute_result.eip712_signing_hash(&auth_domain);
-    recover_and_check_address(
-        &state.config.runner_address,
-        &hash,
-        &authorization.signature,
-    )?;
+    recover_and_check_address(&state.config.runner_address, &hash, signature)?;
 
     let total = handles.len();
     info!(
@@ -766,14 +866,12 @@ pub async fn publish_results(
         )
         .await?;
 
-    let payload = ResultPublishingReport {
+    Ok(ResultPublishingReport {
         message: format!(
             "On the {total} handles submitted to publishing, {} were successfully created, {} were unchanged and {} conflicted",
             summary.created, summary.unchanged, summary.conflicted
         ),
-    };
-    let response = sign_response(&state.signers[&chain_id], chain_id, salt, payload)?;
-    Ok(Json(response))
+    })
 }
 
 /// Request body for `POST /v0/public/handles/status`.
@@ -801,46 +899,55 @@ pub async fn handle_status(
     State(state): State<AppState>,
     Query(query_params): Query<QueryParams>,
     Json(request): Json<HandleStatusRequest>,
-) -> Result<Json<SignedResponse<HandleStatusReport>>, AppError> {
-    let salt = extract_salt(query_params.salt)?;
+) -> Response {
+    let salt = match extract_salt(query_params.salt) {
+        Ok(salt) => salt,
+        Err(e) => return e.into_response(),
+    };
     info!(count = request.handles.len(), "handle status request");
     if request.handles.is_empty() {
-        return Err(AppError::BadRequest("empty handle batch".to_string()));
+        return AppError::BadRequest("empty handle batch".to_string()).into_response();
     }
-    let chain_id = chain_id_from_handle(&request.handles[0])?;
+    let chain_id = match chain_id_from_handle(&request.handles[0]) {
+        Ok(chain_id) => chain_id,
+        Err(e) => return e.into_response(),
+    };
     if !state.verify_chain(chain_id) {
-        return Err(AppError::UnknownChain(chain_id));
+        return AppError::UnknownChain(chain_id).into_response();
     }
+    let result = handle_status_impl(&state, chain_id, request.handles).await;
+    respond(&state.signers[&chain_id], chain_id, salt, result)
+}
+
+async fn handle_status_impl(
+    state: &AppState,
+    chain_id: u32,
+    handles: Vec<String>,
+) -> Result<HandleStatusReport, AppError> {
     let limit = state.config.s3_max_handles_per_request;
-    if request.handles.len() > limit {
+    if handles.len() > limit {
         return Err(AppError::BatchTooLarge {
-            received: request.handles.len(),
+            received: handles.len(),
             limit,
         });
     }
-    for handle in request.handles.clone() {
-        let handle_chain_id = chain_id_from_handle(&handle)?;
+    for handle in &handles {
+        let handle_chain_id = chain_id_from_handle(handle)?;
         if chain_id != handle_chain_id {
             return Err(AppError::BadRequest(format!(
                 "mixed-chain handle batch not supported. Found at least two different chain IDs: {chain_id} and {handle_chain_id}",
             )));
         }
     }
-    let exists_map = state
-        .repository
-        .handles_exist(chain_id, &request.handles)
-        .await?;
-    let statuses: Vec<HandleResolution> = request
-        .handles
+    let exists_map = state.repository.handles_exist(chain_id, &handles).await?;
+    let statuses: Vec<HandleResolution> = handles
         .iter()
         .map(|h| HandleResolution {
             handle: h.clone(),
             resolved: *exists_map.get(h).unwrap_or(&false),
         })
         .collect();
-    let payload = HandleStatusReport { statuses };
-    let response = sign_response(&state.signers[&chain_id], chain_id, salt, payload)?;
-    Ok(Json(response))
+    Ok(HandleStatusReport { statuses })
 }
 
 /// Parses the optional `salt` query parameter into a 32-byte value.
@@ -941,4 +1048,39 @@ fn sign_response<T: SolStruct + Serialize>(
         .map_err(|e| AppError::SigningError(e.to_string()))?
         .to_string();
     Ok(SignedResponse { payload, signature })
+}
+
+/// Turns a handler's outcome into the final HTTP response, signing the success
+/// payload or the sanitized error under the same Handle Gateway domain/salt so
+/// callers can verify either one came from this gateway's signer.
+///
+/// Only reachable once `chain_id` has resolved to a configured signer — errors
+/// raised before that point (e.g. [`AppError::UnknownChain`], or a malformed
+/// `chain_id`/`salt`) have no key to authenticate under and are returned
+/// unsigned via [`AppError`]'s own [`IntoResponse`] impl instead.
+fn respond<T: SolStruct + Serialize>(
+    signer: &PrivateKeySigner,
+    chain_id: u32,
+    salt: B256,
+    result: Result<T, AppError>,
+) -> Response {
+    let err = match result {
+        Ok(payload) => {
+            return match sign_response(signer, chain_id, salt, payload) {
+                Ok(signed) => Json(signed).into_response(),
+                Err(e) => e.into_response(),
+            };
+        }
+        Err(err) => err,
+    };
+    err.log();
+    let (status, code, message) = err.parts();
+    let report = ErrorReport {
+        code: code.to_string(),
+        message,
+    };
+    match sign_response(signer, chain_id, salt, report) {
+        Ok(signed) => (status, Json(signed)).into_response(),
+        Err(_) => err.to_plain_response(),
+    }
 }

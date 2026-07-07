@@ -47,82 +47,101 @@ pub enum AppError {
 }
 
 impl AppError {
-    fn error_code(&self) -> &'static str {
-        match self {
-            AppError::AccessDenied(_) => "access_denied",
-            AppError::BadRequest(_) => "bad_request",
-            AppError::BatchTooLarge { .. } => "batch_too_large",
-            AppError::Conflict(_) => "conflict",
-            AppError::CryptoError(_) => "crypto",
-            AppError::InvalidSolidityType(_) => "invalid_type",
-            AppError::InvalidSolidityValue(_) => "invalid_value",
-            AppError::KmsError(_) => "kms",
-            AppError::NotFound(_) => "not_found",
-            AppError::OperandsNotPrepared => "operands",
-            AppError::RpcError(_) => "rpc",
-            AppError::SigningError(_) => "signing",
-            AppError::StorageError(_) => "storage",
-            AppError::Unauthorized(_) => "unauthorized",
-            AppError::UnknownChain(_) => "unknown_chain",
-        }
-    }
-
-    fn status_code(&self) -> StatusCode {
-        match self {
-            AppError::AccessDenied(_) => StatusCode::FORBIDDEN,
-            AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
-            AppError::BatchTooLarge { .. } => StatusCode::BAD_REQUEST,
-            AppError::Conflict(_) => StatusCode::CONFLICT,
-            AppError::CryptoError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::InvalidSolidityType(_) => StatusCode::BAD_REQUEST,
-            AppError::InvalidSolidityValue(_) => StatusCode::BAD_REQUEST,
-            AppError::KmsError(e) => match e {
-                kms::Error::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            },
-            AppError::NotFound(_) => StatusCode::NOT_FOUND,
-            AppError::OperandsNotPrepared => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::RpcError(_) => StatusCode::SERVICE_UNAVAILABLE,
-            AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::StorageError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
-            AppError::UnknownChain(_) => StatusCode::BAD_REQUEST,
-        }
-    }
-
-    /// Sanitized message safe to return to any caller.
+    /// Returns the HTTP status, machine-readable error code, and the message
+    /// safe to return to any caller for this error, in one place.
     ///
     /// Variants wrapping a foreign error type (KMS/RPC clients, crypto primitives,
     /// storage, the gateway's own EIP-712 signer) can carry upstream URLs, revert
     /// reasons, or padding/internal details in their `Display` output. Those are
-    /// only ever logged (via `Debug`, in [`IntoResponse::into_response`]) and never
-    /// forwarded here. Every other variant is already built from safe,
-    /// caller-relevant text (handle IDs, chain IDs, parse failures).
-    fn public_message(&self) -> String {
+    /// only ever logged (via `Debug`, in [`AppError::log`]) and never forwarded
+    /// here. Every other variant is already built from safe, caller-relevant
+    /// text (handle IDs, chain IDs, parse failures).
+    pub(crate) fn parts(&self) -> (StatusCode, &'static str, String) {
         match self {
-            AppError::CryptoError(_) => "decryption delegation failed".to_string(),
-            AppError::KmsError(_) => "kms unavailable".to_string(),
-            AppError::RpcError(_) => "rpc call failed".to_string(),
-            AppError::SigningError(_) => "signing failed".to_string(),
-            AppError::StorageError(_) => "storage error".to_string(),
-            other => other.to_string(),
+            AppError::AccessDenied(_) => (StatusCode::FORBIDDEN, "access_denied", self.to_string()),
+            AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request", self.to_string()),
+            AppError::BatchTooLarge { .. } => {
+                (StatusCode::BAD_REQUEST, "batch_too_large", self.to_string())
+            }
+            AppError::Conflict(_) => (StatusCode::CONFLICT, "conflict", self.to_string()),
+            AppError::CryptoError(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "crypto",
+                "decryption delegation failed".to_string(),
+            ),
+            AppError::InvalidSolidityType(_) => {
+                (StatusCode::BAD_REQUEST, "invalid_type", self.to_string())
+            }
+            AppError::InvalidSolidityValue(_) => {
+                (StatusCode::BAD_REQUEST, "invalid_value", self.to_string())
+            }
+            AppError::KmsError(e) => (
+                match e {
+                    kms::Error::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+                    _ => StatusCode::INTERNAL_SERVER_ERROR,
+                },
+                "kms",
+                "kms unavailable".to_string(),
+            ),
+            AppError::NotFound(_) => (StatusCode::NOT_FOUND, "not_found", self.to_string()),
+            AppError::OperandsNotPrepared => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "operands",
+                self.to_string(),
+            ),
+            AppError::RpcError(_) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "rpc",
+                "rpc call failed".to_string(),
+            ),
+            AppError::SigningError(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "signing",
+                "signing failed".to_string(),
+            ),
+            AppError::StorageError(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage",
+                "storage error".to_string(),
+            ),
+            AppError::Unauthorized(_) => {
+                (StatusCode::UNAUTHORIZED, "unauthorized", self.to_string())
+            }
+            AppError::UnknownChain(_) => {
+                (StatusCode::BAD_REQUEST, "unknown_chain", self.to_string())
+            }
         }
+    }
+
+    /// Logs this error at a severity derived from its HTTP status.
+    pub(crate) fn log(&self) {
+        if self.parts().0.is_server_error() {
+            error!(error = ?self, "request failed");
+        } else {
+            debug!(error = ?self, "request rejected");
+        }
+    }
+
+    /// Builds the plain, unsigned JSON error body.
+    ///
+    /// Used directly for errors raised before a request's `chain_id` has
+    /// resolved to a configured Handle Gateway signer (there is no key to
+    /// authenticate the response with yet), and as a fallback if signing an
+    /// otherwise-signable error fails.
+    pub(crate) fn to_plain_response(&self) -> Response {
+        let (status, code, message) = self.parts();
+        let body = Json(json!({
+            "error": code,
+            "message": message
+        }));
+        (status, body).into_response()
     }
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let status = self.status_code();
-        if status.is_server_error() {
-            error!(error = ?self, "request failed");
-        } else {
-            debug!(error = ?self, "request rejected");
-        }
-        let body = Json(json!({
-            "error": self.error_code(),
-            "message": self.public_message()
-        }));
-        (status, body).into_response()
+        self.log();
+        self.to_plain_response()
     }
 }
 
@@ -135,8 +154,9 @@ mod tests {
         let err = AppError::KmsError(kms::Error::InvalidResponse(
             "leaked kms endpoint detail".to_string(),
         ));
-        assert_eq!(err.public_message(), "kms unavailable");
-        assert!(!err.public_message().contains("leaked kms endpoint detail"));
+        let (_, _, message) = err.parts();
+        assert_eq!(message, "kms unavailable");
+        assert!(!message.contains("leaked kms endpoint detail"));
     }
 
     #[test]
@@ -144,8 +164,9 @@ mod tests {
         let err = AppError::RpcError(rpc::RpcError::ProviderError(
             "leaked rpc url detail".to_string(),
         ));
-        assert_eq!(err.public_message(), "rpc call failed");
-        assert!(!err.public_message().contains("leaked rpc url detail"));
+        let (_, _, message) = err.parts();
+        assert_eq!(message, "rpc call failed");
+        assert!(!message.contains("leaked rpc url detail"));
     }
 
     #[test]
@@ -153,8 +174,9 @@ mod tests {
         let err = AppError::CryptoError(crypto::Error::EciesDecryptionError(
             "leaked padding detail".to_string(),
         ));
-        assert_eq!(err.public_message(), "decryption delegation failed");
-        assert!(!err.public_message().contains("leaked padding detail"));
+        let (_, _, message) = err.parts();
+        assert_eq!(message, "decryption delegation failed");
+        assert!(!message.contains("leaked padding detail"));
     }
 
     #[test]
@@ -162,20 +184,23 @@ mod tests {
         let err = AppError::StorageError(repository::RepositoryError::InvalidHandle {
             reason: "leaked storage detail".to_string(),
         });
-        assert_eq!(err.public_message(), "storage error");
-        assert!(!err.public_message().contains("leaked storage detail"));
+        let (_, _, message) = err.parts();
+        assert_eq!(message, "storage error");
+        assert!(!message.contains("leaked storage detail"));
     }
 
     #[test]
     fn signing_error_does_not_leak_internal_detail() {
         let err = AppError::SigningError("leaked signer detail".to_string());
-        assert_eq!(err.public_message(), "signing failed");
-        assert!(!err.public_message().contains("leaked signer detail"));
+        let (_, _, message) = err.parts();
+        assert_eq!(message, "signing failed");
+        assert!(!message.contains("leaked signer detail"));
     }
 
     #[test]
     fn client_facing_variants_keep_their_message() {
         let err = AppError::NotFound("0xabc123".to_string());
-        assert_eq!(err.public_message(), err.to_string());
+        let (_, _, message) = err.parts();
+        assert_eq!(message, err.to_string());
     }
 }
