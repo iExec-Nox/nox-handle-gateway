@@ -3,6 +3,7 @@ use alloy::{
     signers::{Signature, SignerSync, local::PrivateKeySigner},
     sol_types::{SolStruct, eip712_domain},
 };
+use axum_prometheus::metrics::counter;
 use k256::elliptic_curve::rand_core::{OsRng, RngCore};
 use reqwest::{Client, header::AUTHORIZATION};
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,8 @@ use crate::types::{
     DelegateAuthorization, DelegateResponseProof, EIP_712_DOMAIN_VERSION,
     PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME,
 };
+
+const KMS_REQUESTS_TOTAL: &str = "nox_handle_gateway_kms_requests_total";
 
 /// Errors returned by [`KmsClient`] operations.
 #[derive(Debug, Error)]
@@ -90,6 +93,17 @@ impl KmsClient {
         })
     }
 
+    pub(crate) fn init_metrics(&self, chain_id: u32) {
+        counter!(KMS_REQUESTS_TOTAL, "chain_id" => chain_id.to_string(), "status" => "UNAVAILABLE")
+            .absolute(0);
+        counter!(KMS_REQUESTS_TOTAL, "chain_id" => chain_id.to_string(), "status" => "INVALID_RESPONSE")
+            .absolute(0);
+        counter!(KMS_REQUESTS_TOTAL, "chain_id" => chain_id.to_string(), "status" => "INVALID_SIGNATURE")
+            .absolute(0);
+        counter!(KMS_REQUESTS_TOTAL, "chain_id" => chain_id.to_string(), "status" => "SUCCESS")
+            .absolute(0);
+    }
+
     /// Calls `POST /v0/delegate` and returns the encrypted shared secret.
     ///
     /// Signs the request with an EIP-712 [`DelegateAuthorization`] and verifies
@@ -138,11 +152,15 @@ impl KmsClient {
             ])
             .json(&request_body)
             .send()
-            .await?;
+            .await
+            .inspect_err(|_| {
+                counter!(KMS_REQUESTS_TOTAL, "chain_id" => chain_id.to_string(), "status" => "UNAVAILABLE").increment(1)
+            })?;
 
         if let Err(err) = response.error_for_status_ref() {
             let status = response.status();
             let error_body = response.text().await?;
+            counter!(KMS_REQUESTS_TOTAL, "chain_id" => chain_id.to_string(), "status" => "INVALID_RESPONSE").increment(1);
             error!("KMS delegate error: {err} {error_body}");
             return Err(Error::InvalidResponse(format!(
                 "delegate call failed with status {status}"
@@ -152,11 +170,19 @@ impl KmsClient {
         let data = response
             .json::<KmsDelegateResponse>()
             .await
-            .inspect_err(|e| error!("Failed to deserialize response: {e}"))
+            .inspect_err(|e| {
+                counter!(KMS_REQUESTS_TOTAL, "chain_id" => chain_id.to_string(), "status" => "INVALID_RESPONSE").increment(1);
+                error!("Failed to deserialize response: {e}")
+            })
             .map_err(|_| Error::InvalidResponse("failed to deserialize response".to_string()))?;
 
-        self.verify_delegate_response(&data, chain_id, salt)?;
+        self.verify_delegate_response(&data, chain_id, salt)
+            .inspect_err(|_| {
+                counter!(KMS_REQUESTS_TOTAL, "chain_id" => chain_id.to_string(), "status" => "INVALID_SIGNATURE").increment(1)
+            })?;
 
+        counter!(KMS_REQUESTS_TOTAL, "chain_id" => chain_id.to_string(), "status" => "SUCCESS")
+            .increment(1);
         Ok(data.encrypted_shared_secret)
     }
 
