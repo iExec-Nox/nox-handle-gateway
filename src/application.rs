@@ -114,7 +114,7 @@ impl Application {
         let prometheus_layer = PrometheusMetricLayerBuilder::new()
             .with_allow_patterns(&["/", "/health", "/metrics", VERSIONED_PATHS])
             .build();
-        // The next statement allows to initialize metrics to zero
+        // Moved before for loop to correctly initialize metrics when calling init_metrics
         let metrics_handle = Handle::make_default_handle(Handle::default());
         let cors_allowed_headers = self.config.server.cors_allowed_headers.clone();
 

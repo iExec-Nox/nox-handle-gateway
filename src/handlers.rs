@@ -93,9 +93,10 @@ pub struct GatewayDelegateResponse {
 }
 
 pub(crate) fn init_metrics(chain_id: u32) {
-    counter!(HANDLE_GATEWAY_COMPUTE_ERROR_TOTAL, "chain_id" => chain_id.to_string(), "reason" => "NOT_FOUND")
+    let chain_id = chain_id.to_string();
+    counter!(HANDLE_GATEWAY_COMPUTE_ERROR_TOTAL, "chain_id" => chain_id.clone(), "reason" => "NOT_FOUND")
         .absolute(0);
-    counter!(HANDLE_GATEWAY_COMPUTE_ERROR_TOTAL, "chain_id" => chain_id.to_string(), "reason" => "NOT_DECRYPTED")
+    counter!(HANDLE_GATEWAY_COMPUTE_ERROR_TOTAL, "chain_id" => chain_id.clone(), "reason" => "NOT_DECRYPTED")
         .absolute(0);
 }
 
