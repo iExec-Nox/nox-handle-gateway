@@ -715,6 +715,7 @@ pub async fn get_operand_handles(
         counter!(HANDLE_GATEWAY_COMPUTE_ERROR_TOTAL, "chain_id" => chain_id.to_string(), "reason" => "NOT_FOUND")
             .increment(missing_handles.len() as u64);
         error!(
+            chain_id,
             transaction_hash = compute_request.transactionHash,
             requested = operands_expected_count,
             fetched = operand_handles.len(),
@@ -752,6 +753,7 @@ pub async fn get_operand_handles(
         counter!(HANDLE_GATEWAY_COMPUTE_ERROR_TOTAL, "chain_id" => chain_id.to_string(), "reason" => "NOT_DECRYPTED")
             .increment(missing_handles.len() as u64);
         error!(
+            chain_id,
             transaction_hash = compute_request.transactionHash,
             requested = operands_expected_count,
             fetched = operands_crypto_material.len(),
@@ -789,7 +791,8 @@ async fn get_crypto_material_for_entry(
         )
         .await
         .inspect_err(|e| {
-            warn!(
+            error!(
+                chain_id,
                 handle = entry.handle,
                 "failed to get encrypted shared secret: {e}"
             )
