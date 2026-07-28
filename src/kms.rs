@@ -3,6 +3,7 @@ use alloy::{
     signers::{Signature, SignerSync, local::PrivateKeySigner},
     sol_types::{SolStruct, eip712_domain},
 };
+use axum_prometheus::metrics::counter;
 use k256::elliptic_curve::rand_core::{OsRng, RngCore};
 use reqwest::{Client, header::AUTHORIZATION};
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,26 @@ use crate::types::{
     DelegateAuthorization, DelegateResponseProof, EIP_712_DOMAIN_VERSION,
     PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME,
 };
+
+const KMS_REQUESTS_TOTAL: &str = "nox_handle_gateway_kms_requests_total";
+
+const KMS_STATUS_SUCCESS: &str = "SUCCESS";
+const KMS_STATUS_UNAVAILABLE: &str = "UNAVAILABLE";
+const KMS_STATUS_INVALID_RESPONSE: &str = "INVALID_RESPONSE";
+const KMS_STATUS_INVALID_SIGNATURE: &str = "INVALID_SIGNATURE";
+const KMS_STATUS_SIGNING_ERROR: &str = "SIGNING_ERROR";
+
+/// Every `status` label reported on [`KMS_REQUESTS_TOTAL`].
+///
+/// Used by [`KmsClient::init_metrics`] to publish each series at zero on startup, so
+/// dashboards and ratio-based alerts have a denominator before the first failure occurs.
+const KMS_STATUSES: [&str; 5] = [
+    KMS_STATUS_SUCCESS,
+    KMS_STATUS_UNAVAILABLE,
+    KMS_STATUS_INVALID_RESPONSE,
+    KMS_STATUS_INVALID_SIGNATURE,
+    KMS_STATUS_SIGNING_ERROR,
+];
 
 /// Errors returned by [`KmsClient`] operations.
 #[derive(Debug, Error)]
@@ -28,6 +49,25 @@ pub enum Error {
     Unavailable(String),
     #[error("Signing error: {0}")]
     Signing(String),
+}
+
+impl Error {
+    /// `status` label reported on [`KMS_REQUESTS_TOTAL`] when a delegate call fails with
+    /// this error.
+    ///
+    /// Exhaustive by construction: adding a variant to [`Error`] fails to compile until a
+    /// label is chosen for it, which keeps `sum(kms_requests_total)` equal to the number of
+    /// delegate calls actually made.
+    fn metric_status(&self) -> &'static str {
+        match self {
+            // Only produced by `KmsClient::new`, never by a delegate call.
+            Error::ClientBuild(_) => KMS_STATUS_UNAVAILABLE,
+            Error::InvalidResponse(_) => KMS_STATUS_INVALID_RESPONSE,
+            Error::InvalidResponseSignature(_) => KMS_STATUS_INVALID_SIGNATURE,
+            Error::Unavailable(_) => KMS_STATUS_UNAVAILABLE,
+            Error::Signing(_) => KMS_STATUS_SIGNING_ERROR,
+        }
+    }
 }
 
 impl From<reqwest::Error> for Error {
@@ -90,12 +130,52 @@ impl KmsClient {
         })
     }
 
+    /// Publishes every [`KMS_REQUESTS_TOTAL`] series for `chain_id` at zero.
+    ///
+    /// Must run after the global metrics recorder is installed, otherwise the samples are
+    /// dropped.
+    pub(crate) fn init_metrics(&self, chain_id: u32) {
+        let chain_id = chain_id.to_string();
+        for status in KMS_STATUSES {
+            counter!(KMS_REQUESTS_TOTAL, "chain_id" => chain_id.clone(), "status" => status)
+                .absolute(0);
+        }
+    }
+
     /// Calls `POST /v0/delegate` and returns the encrypted shared secret.
     ///
     /// Signs the request with an EIP-712 [`DelegateAuthorization`] and verifies
     /// the KMS response carries a valid [`DelegateResponseProof`] from the
     /// expected signer address.
+    ///
+    /// Records exactly one [`KMS_REQUESTS_TOTAL`] sample per call, labelled with
+    /// [`Error::metric_status`] on failure and `SUCCESS` otherwise.
     pub async fn get_encrypted_shared_secret(
+        &self,
+        handle: &str,
+        ephemeral_pub_key: &str,
+        target_pub_key: &str,
+        signer: &PrivateKeySigner,
+        chain_id: u32,
+    ) -> Result<String, Error> {
+        let result = self
+            .delegate(handle, ephemeral_pub_key, target_pub_key, signer, chain_id)
+            .await;
+
+        let status = match &result {
+            Ok(_) => KMS_STATUS_SUCCESS,
+            Err(err) => err.metric_status(),
+        };
+        counter!(KMS_REQUESTS_TOTAL, "chain_id" => chain_id.to_string(), "status" => status)
+            .increment(1);
+
+        result
+    }
+
+    /// Delegate call proper. Reports failures through the returned [`Error`] only —
+    /// metrics are recorded once by [`Self::get_encrypted_shared_secret`], so no early
+    /// return here can escape uncounted.
+    async fn delegate(
         &self,
         handle: &str,
         ephemeral_pub_key: &str,
@@ -142,7 +222,12 @@ impl KmsClient {
 
         if let Err(err) = response.error_for_status_ref() {
             let status = response.status();
-            let error_body = response.text().await?;
+            // Read the body for diagnostics only: a failure here must not mask the HTTP
+            // status we are about to report.
+            let error_body = response
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("<unreadable body: {e}>"));
             error!("KMS delegate error: {err} {error_body}");
             return Err(Error::InvalidResponse(format!(
                 "delegate call failed with status {status}"

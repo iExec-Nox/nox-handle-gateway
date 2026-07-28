@@ -111,7 +111,14 @@ impl Application {
     /// 3. Build [`KmsClient`] and validate S3 buckets
     /// 4. Bind the TCP listener and serve until `SIGTERM` / `Ctrl+C`
     pub async fn run(self) -> anyhow::Result<()> {
+        let prometheus_layer = PrometheusMetricLayerBuilder::new()
+            .with_allow_patterns(&["/", "/health", "/metrics", VERSIONED_PATHS])
+            .build();
+        // Moved before for loop to correctly initialize metrics when calling init_metrics
+        let metrics_handle = Handle::make_default_handle(Handle::default());
         let cors_allowed_headers = self.config.server.cors_allowed_headers.clone();
+
+        let kms_client = KmsClient::new(&self.config.kms)?;
 
         let mut nox_clients: HashMap<u32, NoxClient> = HashMap::new();
         let mut protocol_keys = HashMap::new();
@@ -167,18 +174,15 @@ impl Application {
                 gateway_addr = %onchain_gateway,
                 "Chain configuration complete for chain {chain_id}"
             );
+            handlers::init_metrics(chain_id);
+            kms_client.init_metrics(chain_id);
         }
 
         let crypto_svc = CryptoService::new(protocol_keys)?;
-        let kms_client = KmsClient::new(&self.config.kms)?;
         let repository =
             DataRepository::new(&self.config.chains, self.config.s3_max_concurrent_requests)
                 .await?;
 
-        let prometheus_layer = PrometheusMetricLayerBuilder::new()
-            .with_allow_patterns(&["/", "/health", "/metrics", VERSIONED_PATHS])
-            .build();
-        let metrics_handle = Handle::make_default_handle(Handle::default());
         let state = AppState {
             nox_clients,
             config: self.config.clone(),

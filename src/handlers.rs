@@ -14,6 +14,7 @@ use axum::{
     extract::{Path, Query, State},
     http::header::HeaderMap,
 };
+use axum_prometheus::metrics::counter;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{TimeZone, Utc};
 use futures_util::future::join_all;
@@ -28,6 +29,7 @@ use crate::repository::{HandleEntry, HandleEntryWithTag, HandleMetadata, Reposit
 use crate::types::{DataAccessAuthorization, DecryptionProof, Handle, HandleProof, SolidityType};
 use crate::validation::{chain_id_from_handle, decode_and_validate_value, parse_handle};
 
+const HANDLE_GATEWAY_COMPUTE_ERROR_TOTAL: &str = "nox_handle_gateway_compute_error_total";
 /// EIP-712 domain name for HandleProof generation.
 const NOX_COMPUTE_EIP712_DOMAIN_NAME: &str = "NoxCompute";
 /// EIP-712 domain name for DataAccessAuthorization validation.
@@ -88,6 +90,14 @@ struct GatewayDelegateAuthorization {
 pub struct GatewayDelegateResponse {
     payload: HandleCryptoMaterial,
     signature: String,
+}
+
+pub(crate) fn init_metrics(chain_id: u32) {
+    let chain_id = chain_id.to_string();
+    counter!(HANDLE_GATEWAY_COMPUTE_ERROR_TOTAL, "chain_id" => chain_id.clone(), "reason" => "NOT_FOUND")
+        .absolute(0);
+    counter!(HANDLE_GATEWAY_COMPUTE_ERROR_TOTAL, "chain_id" => chain_id.clone(), "reason" => "NOT_DECRYPTED")
+        .absolute(0);
 }
 
 /// Encrypts a plaintext value and stores it under a freshly generated handle.
@@ -646,9 +656,10 @@ pub struct ComputeResultResponse {
 /// # Errors
 ///
 /// The operation will fail with:
+/// - [`AppError::BadRequest`] if the query parameter or the request contains invalid chain_id or malformed handles.
 /// - [`AppError::Unauthorized`] if the authorization token cannot be verified.
-/// - [`AppError::BadRequest`] if not all operands can be delivered to the Runner,
-///   either due to an operand not retrieved from S3 or not prepared through the KMS.
+/// - [`AppError::NotFound`] if one or more operands are missing from S3 storage.
+/// - [`AppError::OperandsNotPrepared`] if not all operands can be delivered to the Runner.
 pub async fn get_operand_handles(
     State(state): State<AppState>,
     Query(query_params): Query<QueryParams>,
@@ -702,13 +713,16 @@ pub async fn get_operand_handles(
             .into_iter()
             .filter(|handle| !found_handles.contains(handle))
             .collect();
+        counter!(HANDLE_GATEWAY_COMPUTE_ERROR_TOTAL, "chain_id" => chain_id.to_string(), "reason" => "NOT_FOUND")
+            .increment(missing_handles.len() as u64);
         error!(
+            chain_id,
             transaction_hash = compute_request.transactionHash,
             requested = operands_expected_count,
             fetched = operand_handles.len(),
             "expected operand handles not found in handle database {missing_handles:?}"
         );
-        return Err(AppError::BadRequest(
+        return Err(AppError::NotFound(
             "impossible to perform computation, missing operand handles".to_string(),
         ));
     }
@@ -737,7 +751,10 @@ pub async fn get_operand_handles(
             .into_iter()
             .filter(|handle| !found_handles.contains(handle))
             .collect();
+        counter!(HANDLE_GATEWAY_COMPUTE_ERROR_TOTAL, "chain_id" => chain_id.to_string(), "reason" => "NOT_DECRYPTED")
+            .increment(missing_handles.len() as u64);
         error!(
+            chain_id,
             transaction_hash = compute_request.transactionHash,
             requested = operands_expected_count,
             fetched = operands_crypto_material.len(),
@@ -773,7 +790,14 @@ async fn get_crypto_material_for_entry(
             signer,
             chain_id,
         )
-        .await?;
+        .await
+        .inspect_err(|e| {
+            error!(
+                chain_id,
+                handle = entry.handle,
+                "failed to get encrypted shared secret: {e}"
+            )
+        })?;
     Ok(HandleCryptoMaterial {
         handle: entry.handle.clone(),
         ciphertext: entry.ciphertext.clone(),
