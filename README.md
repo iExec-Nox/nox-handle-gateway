@@ -414,8 +414,9 @@ Returns re-encrypted crypto material for a batch of operand handles. Intended fo
 
 | Status | Description |
 | ------ | ----------- |
-| `400 Bad Request` | `chainId` in the authorization token does not correspond to a configured chain; one or more operand handles not found in S3; or `salt` is malformed |
+| `400 Bad Request` | `chainId` in the authorization token does not correspond to a configured chain or `salt` is malformed |
 | `401 Unauthorized` | Authorization token missing, malformed, or not signed by the configured runner |
+| `404 Not Found` | one or more operand handles not found in S3 |
 | `500 Internal Server Error` | S3 read error, or KMS delegation failed for one or more operands |
 
 **EIP-712 Domain (for authorization `signature`):**
