@@ -96,9 +96,11 @@ The Handle Gateway supports multiple chains simultaneously. Repeat the `CHAINS__
 | `NOX_HANDLE_GATEWAY_DEFAULT_CHAIN_ID` | Fallback chain ID used when `POST /v0/secrets` omits `chain_id` | No | `421614` |
 | `NOX_HANDLE_GATEWAY_KMS__URL` | KMS endpoint | No | `http://localhost:9000` |
 | `NOX_HANDLE_GATEWAY_KMS__CONNECT_TIMEOUT` | Timeout for the connect phase against the KMS | No | `3s` |
+| `NOX_HANDLE_GATEWAY_KMS__MAX_CONCURRENT_REQUESTS` | Global cap on in-flight KMS delegate calls across all endpoints and chains (single shared semaphore); observable via the `nox_handle_gateway_kms_inflight` gauge | No | `50` |
 | `NOX_HANDLE_GATEWAY_KMS__TIMEOUT` | Total request timeout against the KMS | No | `10s` |
 | `NOX_HANDLE_GATEWAY_KMS__SIGNER_ADDRESS` | Expected KMS signer address | **Yes** | — |
 | `NOX_HANDLE_GATEWAY_RUNNER_ADDRESS` | Ethereum address of the authorised runner | **Yes** | — |
+| `NOX_HANDLE_GATEWAY_COMPUTE_MAX_OPERANDS_PER_REQUEST` | Max operands accepted in a single `GET /v0/compute/operands` request; each operand costs one KMS delegate call (DoS guard). Minimum `3`, the widest operation the runner currently emits | No | `5` |
 | `NOX_HANDLE_GATEWAY_S3_MAX_CONCURRENT_REQUESTS` | Global cap on in-flight S3 operations across all chains (single shared semaphore) | No | `500` |
 | `NOX_HANDLE_GATEWAY_S3_MAX_HANDLES_PER_REQUEST` | Max handles accepted in a single `POST /v0/public/handles/status` batch (DoS guard) | No | `1000` |
 
@@ -414,10 +416,11 @@ Returns re-encrypted crypto material for a batch of operand handles. Intended fo
 
 | Status | Description |
 | ------ | ----------- |
-| `400 Bad Request` | `chainId` in the authorization token does not correspond to a configured chain or `salt` is malformed |
+| `400 Bad Request` | `chainId` in the authorization token does not correspond to a configured chain, `salt` is malformed, or `payload.operands` exceeds `COMPUTE_MAX_OPERANDS_PER_REQUEST` (default 5) |
 | `401 Unauthorized` | Authorization token missing, malformed, or not signed by the configured runner |
 | `404 Not Found` | one or more operand handles not found in S3 |
-| `500 Internal Server Error` | S3 read error, or KMS delegation failed for one or more operands |
+| `500 Internal Server Error` | S3 read error, or the KMS returned a malformed or unverifiable delegation response |
+| `503 Service Unavailable` | KMS unreachable or returned an error status |
 
 **EIP-712 Domain (for authorization `signature`):**
 

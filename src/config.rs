@@ -35,6 +35,16 @@ pub struct Config {
     pub kms: KmsConfig,
     #[validate(custom(function = "validate_non_zero_address"))]
     pub runner_address: Address,
+    /// Maximum number of operands accepted in a single `GET /v0/compute/operands`
+    /// request.
+    ///
+    /// Each operand costs one KMS delegate call, so this bounds the KMS fan-out a
+    /// single authenticated Runner request can trigger. The floor of 3 matches the
+    /// widest operation the Runner currently emits — a lower value would reject
+    /// legitimate traffic.
+    #[serde(default = "default_compute_max_operands_per_request")]
+    #[validate(range(min = 3, max = 50))]
+    pub compute_max_operands_per_request: usize,
     #[serde(default = "default_s3_max_concurrent_requests")]
     #[validate(range(min = 1, max = 1_000))]
     pub s3_max_concurrent_requests: usize,
@@ -153,11 +163,38 @@ pub struct KmsConfig {
     #[serde(with = "humantime_serde")]
     #[validate(custom(function = "validate_timeout"))]
     pub connect_timeout: Duration,
+    /// Global cap on delegate calls in flight against the KMS, across every
+    /// endpoint and chain.
+    ///
+    /// Backpressure guard, not a rate limit: callers queue on the semaphore in
+    /// [`crate::kms::KmsClient`] rather than being rejected. Deliberately separate
+    /// from [`Config::s3_max_concurrent_requests`] — the two protect different
+    /// resources.
+    ///
+    /// The floor of 1 matters: a value of 0 would make every delegate call wait
+    /// forever on a permit that is never issued.
+    #[serde(default = "default_kms_max_concurrent_requests")]
+    #[validate(range(min = 1, max = 1_000))]
+    pub max_concurrent_requests: usize,
     #[serde(with = "humantime_serde")]
     #[validate(custom(function = "validate_timeout"))]
     pub timeout: Duration,
     #[validate(custom(function = "validate_non_zero_address"))]
     pub signer_address: Address,
+}
+
+/// Default cap on operands accepted in a single `GET /v0/compute/operands` request.
+///
+/// Sized just above the widest operation the Runner currently emits (3 handles), which
+/// leaves headroom without licensing large KMS fan-outs. Raise it when the Runner starts
+/// batching operations into a single request.
+fn default_compute_max_operands_per_request() -> usize {
+    5
+}
+
+/// Default global cap on concurrent in-flight KMS delegate requests.
+fn default_kms_max_concurrent_requests() -> usize {
+    50
 }
 
 pub(crate) fn default_rpc_call_timeout() -> Duration {
@@ -299,84 +336,145 @@ mod tests {
     use std::str::FromStr;
     use validator::ValidationErrors;
 
+    /// Every variable that has no default, so [`Config::load`] succeeds.
+    ///
+    /// Tests that exercise an optional field override one entry on top of this set, which
+    /// keeps them from asserting on a `load` failure caused by an unrelated missing field.
+    fn required_vars() -> Vec<(&'static str, Option<&'static str>)> {
+        vec![
+            (
+                "NOX_HANDLE_GATEWAY_CHAINS__31337__NOX_COMPUTE_CONTRACT_ADDRESS",
+                Some("0x9c3244fa8F8D46e9f251eda52E759A6D6f47eaC9"),
+            ),
+            (
+                "NOX_HANDLE_GATEWAY_CHAINS__31337__RPC_URL",
+                Some("http://localhost:8545"),
+            ),
+            (
+                "NOX_HANDLE_GATEWAY_CHAINS__31337__S3__ACCESS_KEY",
+                Some("username"),
+            ),
+            (
+                "NOX_HANDLE_GATEWAY_CHAINS__31337__S3__SECRET_KEY",
+                Some("password"),
+            ),
+            (
+                "NOX_HANDLE_GATEWAY_CHAINS__31337__S3__BUCKET",
+                Some("bucket"),
+            ),
+            (
+                "NOX_HANDLE_GATEWAY_CHAINS__31337__S3__REGION",
+                Some("region"),
+            ),
+            (
+                "NOX_HANDLE_GATEWAY_CHAINS__31337__WALLET_KEY",
+                Some("0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
+            ),
+            ("NOX_HANDLE_GATEWAY_DEFAULT_CHAIN_ID", Some("31337")),
+            (
+                "NOX_HANDLE_GATEWAY_KMS__SIGNER_ADDRESS",
+                Some("0xD60BB0381d2712863e241F003349591475E0b961"),
+            ),
+            (
+                "NOX_HANDLE_GATEWAY_RUNNER_ADDRESS",
+                Some("0x6cf34A6f8295c0478791A58c87CFe6E9e827B220"),
+            ),
+        ]
+    }
+
     #[test]
     fn check_config() {
-        temp_env::with_vars(
-            [
-                (
-                    "NOX_HANDLE_GATEWAY_CHAINS__31337__NOX_COMPUTE_CONTRACT_ADDRESS",
-                    Some("0x9c3244fa8F8D46e9f251eda52E759A6D6f47eaC9"),
-                ),
-                (
-                    "NOX_HANDLE_GATEWAY_CHAINS__31337__RPC_URL",
-                    Some("http://localhost:8545"),
-                ),
-                (
-                    "NOX_HANDLE_GATEWAY_CHAINS__31337__S3__ACCESS_KEY",
-                    Some("username"),
-                ),
-                (
-                    "NOX_HANDLE_GATEWAY_CHAINS__31337__S3__SECRET_KEY",
-                    Some("password"),
-                ),
-                (
-                    "NOX_HANDLE_GATEWAY_CHAINS__31337__S3__BUCKET",
-                    Some("bucket"),
-                ),
-                (
-                    "NOX_HANDLE_GATEWAY_CHAINS__31337__S3__REGION",
-                    Some("region"),
-                ),
-                (
-                    "NOX_HANDLE_GATEWAY_CHAINS__31337__WALLET_KEY",
-                    Some("0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
-                ),
-                ("NOX_HANDLE_GATEWAY_DEFAULT_CHAIN_ID", Some("31337")),
-                (
-                    "NOX_HANDLE_GATEWAY_KMS__SIGNER_ADDRESS",
-                    Some("0xD60BB0381d2712863e241F003349591475E0b961"),
-                ),
-                (
-                    "NOX_HANDLE_GATEWAY_RUNNER_ADDRESS",
-                    Some("0x6cf34A6f8295c0478791A58c87CFe6E9e827B220"),
-                ),
-                (
-                    "NOX_HANDLE_GATEWAY_SERVER__CORS_ALLOWED_HEADERS",
-                    Some("a,b"),
-                ),
-            ],
-            || {
-                let config = Config::load().expect("should load");
-                config.validate().expect("should validate");
-                assert_eq!(Duration::from_secs(8), config.chains[&31337].call_timeout);
-                assert_eq!(
-                    Duration::from_secs(5),
-                    config.chains[&31337].connect_timeout
-                );
-                assert_eq!(
-                    Address::from_str("0x9c3244fa8F8D46e9f251eda52E759A6D6f47eaC9").unwrap(),
-                    config.chains[&31337].nox_compute_contract_address
-                );
-                assert_eq!("http://localhost:8545", config.chains[&31337].rpc_url);
-                assert_eq!("username", config.chains[&31337].s3.access_key);
-                assert_eq!("password", config.chains[&31337].s3.secret_key);
-                assert_eq!("bucket", config.chains[&31337].s3.bucket);
-                assert_eq!("region", config.chains[&31337].s3.region);
-                assert_eq!(
-                    "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                    config.chains[&31337].wallet_key
-                );
-                assert_eq!(
-                    Address::from_str("0xD60BB0381d2712863e241F003349591475E0b961").unwrap(),
-                    config.kms.signer_address
-                );
-                assert_eq!(
-                    Address::from_str("0x6cf34A6f8295c0478791A58c87CFe6E9e827B220").unwrap(),
-                    config.runner_address
-                );
-                assert_eq!(vec!["a", "b"], config.server.cors_allowed_headers);
-            },
-        )
+        let mut vars = required_vars();
+        vars.push((
+            "NOX_HANDLE_GATEWAY_SERVER__CORS_ALLOWED_HEADERS",
+            Some("a,b"),
+        ));
+        temp_env::with_vars(vars, || {
+            let config = Config::load().expect("should load");
+            config.validate().expect("should validate");
+            assert_eq!(Duration::from_secs(8), config.chains[&31337].call_timeout);
+            assert_eq!(
+                Duration::from_secs(5),
+                config.chains[&31337].connect_timeout
+            );
+            assert_eq!(
+                Address::from_str("0x9c3244fa8F8D46e9f251eda52E759A6D6f47eaC9").unwrap(),
+                config.chains[&31337].nox_compute_contract_address
+            );
+            assert_eq!("http://localhost:8545", config.chains[&31337].rpc_url);
+            assert_eq!("username", config.chains[&31337].s3.access_key);
+            assert_eq!("password", config.chains[&31337].s3.secret_key);
+            assert_eq!("bucket", config.chains[&31337].s3.bucket);
+            assert_eq!("region", config.chains[&31337].s3.region);
+            assert_eq!(
+                "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                config.chains[&31337].wallet_key
+            );
+            assert_eq!(
+                Address::from_str("0xD60BB0381d2712863e241F003349591475E0b961").unwrap(),
+                config.kms.signer_address
+            );
+            assert_eq!(
+                Address::from_str("0x6cf34A6f8295c0478791A58c87CFe6E9e827B220").unwrap(),
+                config.runner_address
+            );
+            assert_eq!(vec!["a", "b"], config.server.cors_allowed_headers);
+            assert_eq!(5, config.compute_max_operands_per_request);
+            assert_eq!(50, config.kms.max_concurrent_requests);
+        })
+    }
+
+    /// Both concurrency knobs must stay optional: they were added to a service that was
+    /// already deployed, so a missing variable has to fall back rather than fail to load.
+    #[test]
+    fn check_concurrency_limits_are_optional() {
+        let mut vars = required_vars();
+        vars.push(("NOX_HANDLE_GATEWAY_COMPUTE_MAX_OPERANDS_PER_REQUEST", None));
+        vars.push(("NOX_HANDLE_GATEWAY_KMS__MAX_CONCURRENT_REQUESTS", None));
+        temp_env::with_vars(vars, || {
+            let config = Config::load().expect("should load without concurrency limits set");
+            config.validate().expect("should validate");
+            assert_eq!(5, config.compute_max_operands_per_request);
+            assert_eq!(50, config.kms.max_concurrent_requests);
+        })
+    }
+
+    /// `kms.max_concurrent_requests = 0` would build a `Semaphore` that never issues a
+    /// permit, hanging every KMS call forever instead of erroring — and the operand cap has
+    /// to stay at or above the widest operation the runner emits. Validation rejects both.
+    #[test]
+    fn check_invalid_concurrency_limits() {
+        let mut vars = required_vars();
+        vars.push((
+            "NOX_HANDLE_GATEWAY_COMPUTE_MAX_OPERANDS_PER_REQUEST",
+            Some("2"),
+        ));
+        vars.push(("NOX_HANDLE_GATEWAY_KMS__MAX_CONCURRENT_REQUESTS", Some("0")));
+        temp_env::with_vars(vars, || {
+            let config = Config::load().expect("should load");
+            let result = config.validate();
+            assert!(ValidationErrors::has_error(
+                &result,
+                "compute_max_operands_per_request"
+            ));
+            assert!(ValidationErrors::has_error(&result, "kms"));
+        })
+    }
+
+    #[test]
+    fn check_operand_cap_upper_bound() {
+        let mut vars = required_vars();
+        vars.push((
+            "NOX_HANDLE_GATEWAY_COMPUTE_MAX_OPERANDS_PER_REQUEST",
+            Some("51"),
+        ));
+        temp_env::with_vars(vars, || {
+            let config = Config::load().expect("should load");
+            assert!(ValidationErrors::has_error(
+                &config.validate(),
+                "compute_max_operands_per_request"
+            ));
+        })
     }
 
     #[test]
