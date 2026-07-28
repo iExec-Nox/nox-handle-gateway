@@ -1,13 +1,16 @@
+use std::sync::Arc;
+
 use alloy::{
     primitives::{Address, B256, hex},
     signers::{Signature, SignerSync, local::PrivateKeySigner},
     sol_types::{SolStruct, eip712_domain},
 };
-use axum_prometheus::metrics::counter;
+use axum_prometheus::metrics::{counter, gauge};
 use k256::elliptic_curve::rand_core::{OsRng, RngCore};
 use reqwest::{Client, header::AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
 use crate::config::KmsConfig;
@@ -16,7 +19,25 @@ use crate::types::{
     PROTOCOL_DELEGATE_EIP712_DOMAIN_NAME,
 };
 
+/// Delegate calls attempted against the KMS, labelled `chain_id` and `status`.
+///
+/// [`KmsClient::get_encrypted_shared_secret`] owns the only increment, so no early return
+/// inside [`KmsClient::delegate`] can escape uncounted and every call contributes exactly
+/// one sample.
+///
+/// Counts attempts rather than requests that reached the wire: a call that fails earlier —
+/// an [`Error::Signing`] failure while building the EIP-712 authorization, or a closed
+/// semaphore — still records a sample, under whichever label [`Error::metric_status`]
+/// assigns it. [`KMS_STATUSES`] lists the full label set.
 const KMS_REQUESTS_TOTAL: &str = "nox_handle_gateway_kms_requests_total";
+
+/// Delegate calls currently in flight against the KMS, across every endpoint and chain.
+///
+/// Unlabelled on purpose: the KMS has one capacity regardless of which endpoint or chain
+/// drives it, so this must be comparable against the single
+/// [`KmsConfig::max_concurrent_requests`] ceiling. A plateau at that value means callers
+/// are queueing on [`KmsClient::semaphore`].
+const KMS_INFLIGHT: &str = "nox_handle_gateway_kms_inflight";
 
 const KMS_STATUS_SUCCESS: &str = "SUCCESS";
 const KMS_STATUS_UNAVAILABLE: &str = "UNAVAILABLE";
@@ -55,7 +76,7 @@ impl Error {
     /// `status` label reported on [`KMS_REQUESTS_TOTAL`] when a delegate call fails with
     /// this error.
     ///
-    /// Exhaustive by construction: adding a variant to [`Error`] fails to compile until a
+    /// Exhaustive by construction: adding a variant to [`enum@Error`] fails to compile until a
     /// label is chosen for it, which keeps `sum(kms_requests_total)` equal to the number of
     /// delegate calls actually made.
     fn metric_status(&self) -> &'static str {
@@ -106,6 +127,28 @@ pub struct KmsClient {
     pub client: Client,
     pub base_url: String,
     pub kms_signer_address: Address,
+    /// Shared by every clone of this client, so the cap is global rather than per-clone.
+    semaphore: Arc<Semaphore>,
+}
+
+/// Keeps [`KMS_INFLIGHT`] accurate for the lifetime of a single delegate call.
+///
+/// Decrementing at the end of the call site would leak the gauge upward whenever the
+/// request future is dropped instead of completing — which is exactly what Axum does when
+/// a client disconnects mid-request. `Drop` runs on that path too.
+struct InflightGuard;
+
+impl InflightGuard {
+    fn enter() -> Self {
+        gauge!(KMS_INFLIGHT).increment(1.0);
+        Self
+    }
+}
+
+impl Drop for InflightGuard {
+    fn drop(&mut self) {
+        gauge!(KMS_INFLIGHT).decrement(1.0);
+    }
 }
 
 impl KmsClient {
@@ -122,24 +165,30 @@ impl KmsClient {
             .map_err(Error::ClientBuild)?;
 
         info!(kms_signer_address = %config.signer_address, "KMS client initialized");
+        let semaphore = Arc::new(Semaphore::new(config.max_concurrent_requests));
 
         Ok(Self {
             client,
             base_url: config.url.trim_end_matches('/').to_string(),
             kms_signer_address: config.signer_address,
+            semaphore,
         })
     }
 
-    /// Publishes every [`KMS_REQUESTS_TOTAL`] series for `chain_id` at zero.
+    /// Publishes every [`KMS_REQUESTS_TOTAL`] series for `chain_id` at zero, plus the
+    /// unlabelled [`KMS_INFLIGHT`] gauge.
     ///
     /// Must run after the global metrics recorder is installed, otherwise the samples are
-    /// dropped.
+    /// dropped. Called once per configured chain: re-setting the chain-agnostic
+    /// [`KMS_INFLIGHT`] gauge to zero on each call is idempotent, and it happens at startup
+    /// before any delegate call can be in flight.
     pub(crate) fn init_metrics(&self, chain_id: u32) {
         let chain_id = chain_id.to_string();
         for status in KMS_STATUSES {
             counter!(KMS_REQUESTS_TOTAL, "chain_id" => chain_id.clone(), "status" => status)
                 .absolute(0);
         }
+        gauge!(KMS_INFLIGHT).set(0.0);
     }
 
     /// Calls `POST /v0/delegate` and returns the encrypted shared secret.
@@ -158,9 +207,20 @@ impl KmsClient {
         signer: &PrivateKeySigner,
         chain_id: u32,
     ) -> Result<String, Error> {
-        let result = self
-            .delegate(handle, ephemeral_pub_key, target_pub_key, signer, chain_id)
-            .await;
+        // Held across the delegate call and released on drop, so the cap bounds concurrent
+        // calls rather than total calls. Matched rather than `?`-propagated to keep the
+        // "exactly one KMS_REQUESTS_TOTAL sample per call" invariant below intact.
+        let result = match self.semaphore.acquire().await {
+            Ok(_permit) => {
+                let _inflight = InflightGuard::enter();
+                self.delegate(handle, ephemeral_pub_key, target_pub_key, signer, chain_id)
+                    .await
+            }
+            // Unreachable today: the semaphore is owned by this client and never closed.
+            // Surfaced as `Unavailable` (503) so a future `close()` degrades instead of
+            // silently succeeding.
+            Err(err) => Err(Error::Unavailable(format!("KMS semaphore closed: {err}"))),
+        };
 
         let status = match &result {
             Ok(_) => KMS_STATUS_SUCCESS,
@@ -172,7 +232,7 @@ impl KmsClient {
         result
     }
 
-    /// Delegate call proper. Reports failures through the returned [`Error`] only —
+    /// Delegate call proper. Reports failures through the returned [`enum@Error`] only —
     /// metrics are recorded once by [`Self::get_encrypted_shared_secret`], so no early
     /// return here can escape uncounted.
     async fn delegate(

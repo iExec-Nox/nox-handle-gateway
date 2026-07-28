@@ -657,6 +657,8 @@ pub struct ComputeResultResponse {
 ///
 /// The operation will fail with:
 /// - [`AppError::BadRequest`] if the query parameter or the request contains invalid chain_id or malformed handles.
+/// - [`AppError::BatchTooLarge`] if the request carries more operands than
+///   [`Config::compute_max_operands_per_request`](crate::config::Config::compute_max_operands_per_request).
 /// - [`AppError::Unauthorized`] if the authorization token cannot be verified.
 /// - [`AppError::NotFound`] if one or more operands are missing from S3 storage.
 /// - [`AppError::OperandsNotPrepared`] if not all operands can be delivered to the Runner.
@@ -693,6 +695,12 @@ pub async fn get_operand_handles(
     debug!("preparing handles for caller {}", compute_request.caller);
 
     let operands_expected_count = compute_request.operands.len();
+    if operands_expected_count > state.config.compute_max_operands_per_request {
+        return Err(AppError::BatchTooLarge {
+            received: operands_expected_count,
+            limit: state.config.compute_max_operands_per_request,
+        });
+    }
 
     let operand_handles: Vec<HandleEntry> = state
         .repository
