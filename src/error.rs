@@ -40,6 +40,12 @@ pub enum AppError {
     SigningError(String),
     #[error("Storage error: {0}")]
     StorageError(#[from] repository::RepositoryError),
+    /// The request exceeded its wall-clock ceiling and was abandoned.
+    ///
+    /// Raised by the timeout middleware in [`crate::application`], never by a handler:
+    /// the handler future is dropped, so no partial work is reported.
+    #[error("Request timed out")]
+    Timeout,
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
     #[error("chain_id {0} not configured")]
@@ -62,6 +68,7 @@ impl AppError {
             AppError::RpcError(_) => "rpc",
             AppError::SigningError(_) => "signing",
             AppError::StorageError(_) => "storage",
+            AppError::Timeout => "timeout",
             AppError::Unauthorized(_) => "unauthorized",
             AppError::UnknownChain(_) => "unknown_chain",
         }
@@ -77,7 +84,10 @@ impl AppError {
             AppError::InvalidSolidityType(_) => StatusCode::BAD_REQUEST,
             AppError::InvalidSolidityValue(_) => StatusCode::BAD_REQUEST,
             AppError::KmsError(e) => match e {
-                kms::Error::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+                // Retryable: the KMS is unreachable, or our own concurrency budget ran out.
+                kms::Error::Unavailable(_) | kms::Error::Saturated(_) => {
+                    StatusCode::SERVICE_UNAVAILABLE
+                }
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
@@ -85,6 +95,7 @@ impl AppError {
             AppError::RpcError(_) => StatusCode::SERVICE_UNAVAILABLE,
             AppError::SigningError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::StorageError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::Timeout => StatusCode::REQUEST_TIMEOUT,
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             AppError::UnknownChain(_) => StatusCode::BAD_REQUEST,
         }

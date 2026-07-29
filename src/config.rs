@@ -73,6 +73,19 @@ pub struct ServerConfig {
     pub port: u16,
     #[serde(deserialize_with = "deserialize_header_names")]
     pub cors_allowed_headers: Vec<HeaderName>,
+    /// Wall-clock ceiling on a single `/v0` request, including time spent queued on the
+    /// KMS semaphore.
+    ///
+    /// Must stay above one KMS request timeout ([`KmsConfig::timeout`]) plus the queue
+    /// wait expected once [`KmsConfig::max_concurrent_requests`] saturates, or legitimate
+    /// operand batches are cut short under load. Operands are fetched concurrently, so the
+    /// floor is one KMS timeout rather than one per operand.
+    ///
+    /// The `/`, `/health`, and `/metrics` routes use a shorter fixed ceiling instead — see
+    /// [`crate::application`].
+    #[serde(with = "humantime_serde", default = "default_request_timeout")]
+    #[validate(custom(function = "validate_timeout"))]
+    pub request_timeout: Duration,
 }
 
 /// Per-chain configuration combining RPC, signing key, and S3 storage settings.
@@ -195,6 +208,15 @@ fn default_compute_max_operands_per_request() -> usize {
 /// Default global cap on concurrent in-flight KMS delegate requests.
 fn default_kms_max_concurrent_requests() -> usize {
     50
+}
+
+/// Default wall-clock ceiling on a single `/v0` request.
+///
+/// Three times the default KMS request timeout (10s), which leaves room for one KMS call
+/// plus queue wait and S3 reads without letting a stuck request hold a connection for
+/// minutes. [`validate_timeout`] caps any override at 60s.
+fn default_request_timeout() -> Duration {
+    Duration::from_secs(30)
 }
 
 pub(crate) fn default_rpc_call_timeout() -> Duration {
@@ -421,21 +443,38 @@ mod tests {
             assert_eq!(vec!["a", "b"], config.server.cors_allowed_headers);
             assert_eq!(5, config.compute_max_operands_per_request);
             assert_eq!(50, config.kms.max_concurrent_requests);
+            assert_eq!(Duration::from_secs(30), config.server.request_timeout);
         })
     }
 
-    /// Both concurrency knobs must stay optional: they were added to a service that was
-    /// already deployed, so a missing variable has to fall back rather than fail to load.
+    /// Both concurrency knobs and the request ceiling must stay optional: each was added to
+    /// a service that was already deployed, so a missing variable has to fall back rather
+    /// than fail to load.
     #[test]
     fn check_concurrency_limits_are_optional() {
         let mut vars = required_vars();
         vars.push(("NOX_HANDLE_GATEWAY_COMPUTE_MAX_OPERANDS_PER_REQUEST", None));
         vars.push(("NOX_HANDLE_GATEWAY_KMS__MAX_CONCURRENT_REQUESTS", None));
+        vars.push(("NOX_HANDLE_GATEWAY_SERVER__REQUEST_TIMEOUT", None));
         temp_env::with_vars(vars, || {
             let config = Config::load().expect("should load without concurrency limits set");
             config.validate().expect("should validate");
             assert_eq!(5, config.compute_max_operands_per_request);
             assert_eq!(50, config.kms.max_concurrent_requests);
+            assert_eq!(Duration::from_secs(30), config.server.request_timeout);
+        })
+    }
+
+    /// The request ceiling shares [`validate_timeout`] with every other timeout in this
+    /// config, so it inherits the 60s upper bound — a request allowed to run for minutes
+    /// defeats the point of having a ceiling at all.
+    #[test]
+    fn check_request_timeout_upper_bound() {
+        let mut vars = required_vars();
+        vars.push(("NOX_HANDLE_GATEWAY_SERVER__REQUEST_TIMEOUT", Some("61s")));
+        temp_env::with_vars(vars, || {
+            let config = Config::load().expect("should load");
+            assert!(ValidationErrors::has_error(&config.validate(), "server"));
         })
     }
 

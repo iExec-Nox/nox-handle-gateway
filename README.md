@@ -93,6 +93,7 @@ The Handle Gateway supports multiple chains simultaneously. Repeat the `CHAINS__
 | `NOX_HANDLE_GATEWAY_SERVER__HOST` | Bind address | No | `127.0.0.1` |
 | `NOX_HANDLE_GATEWAY_SERVER__PORT` | Port | No | `3000` |
 | `NOX_HANDLE_GATEWAY_SERVER__CORS_ALLOWED_HEADERS` | Comma-separated list of allowed CORS request headers | No | `content-type,authorization` |
+| `NOX_HANDLE_GATEWAY_SERVER__REQUEST_TIMEOUT` | Wall-clock ceiling on a single `/v0` request, including time queued on the KMS semaphore. Exceeding it returns `408`. Must stay above one `KMS__TIMEOUT` plus queue wait at `KMS__MAX_CONCURRENT_REQUESTS` saturation. Max `60s`. `/`, `/health` and `/metrics` use a fixed `5s` ceiling instead | No | `30s` |
 | `NOX_HANDLE_GATEWAY_DEFAULT_CHAIN_ID` | Fallback chain ID used when `POST /v0/secrets` omits `chain_id` | No | `421614` |
 | `NOX_HANDLE_GATEWAY_KMS__URL` | KMS endpoint | No | `http://localhost:9000` |
 | `NOX_HANDLE_GATEWAY_KMS__CONNECT_TIMEOUT` | Timeout for the connect phase against the KMS | No | `3s` |
@@ -191,6 +192,8 @@ salt: <salt query parameter, or bytes32(0)>
 Note there is no `verifyingContract` in the response domain. Per-endpoint auth domains are documented separately and have a different structure.
 
 Authenticated endpoints require `Authorization: EIP712 <Base64(JSON)>` and enforce a maximum token validity window of 1 hour.
+
+Every endpoint below is subject to `SERVER__REQUEST_TIMEOUT` (default `30s`). A request that exceeds it is abandoned and answered `408 Request Timeout` with `{"error": "timeout", "message": "Request timed out"}`, so this status is omitted from the per-endpoint error tables that follow.
 
 ---
 
@@ -334,7 +337,7 @@ Returns re-encrypted crypto material for a handle after verifying the caller's i
 | `403 Forbidden` | Caller does not have viewer access to this handle |
 | `404 Not Found` | Handle does not exist in S3 |
 | `500 Internal Server Error` | Unexpected S3 or KMS error |
-| `503 Service Unavailable` | RPC or KMS unreachable |
+| `503 Service Unavailable` | RPC or KMS unreachable, or the KMS concurrency limit (`KMS__MAX_CONCURRENT_REQUESTS`) stayed saturated for longer than `KMS__TIMEOUT` — retryable |
 
 **EIP-712 Domain (for authorization `signature`):**
 
@@ -420,7 +423,7 @@ Returns re-encrypted crypto material for a batch of operand handles. Intended fo
 | `401 Unauthorized` | Authorization token missing, malformed, or not signed by the configured runner |
 | `404 Not Found` | one or more operand handles not found in S3 |
 | `500 Internal Server Error` | S3 read error, or the KMS returned a malformed or unverifiable delegation response |
-| `503 Service Unavailable` | KMS unreachable or returned an error status |
+| `503 Service Unavailable` | KMS unreachable or returned an error status, or the KMS concurrency limit (`KMS__MAX_CONCURRENT_REQUESTS`) stayed saturated for longer than `KMS__TIMEOUT` — retryable |
 
 **EIP-712 Domain (for authorization `signature`):**
 
@@ -596,7 +599,7 @@ Returns a verifiable decryption proof for a publicly decryptable handle. The Han
 | `403 Forbidden` | Handle is not marked as publicly decryptable on-chain |
 | `404 Not Found` | Handle does not exist in S3 |
 | `500 Internal Server Error` | Crypto or signing failure |
-| `503 Service Unavailable` | RPC or KMS unreachable |
+| `503 Service Unavailable` | RPC or KMS unreachable, or the KMS concurrency limit (`KMS__MAX_CONCURRENT_REQUESTS`) stayed saturated for longer than `KMS__TIMEOUT` — retryable |
 
 **EIP-712 Domain (for `decryptionProof` signature):**
 
