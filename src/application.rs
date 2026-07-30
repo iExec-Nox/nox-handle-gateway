@@ -1,12 +1,14 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use alloy::{primitives::hex, signers::local::PrivateKeySigner};
 use anyhow::{Context, anyhow};
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{Request, State},
     http::{HeaderName, StatusCode, Uri},
-    response::IntoResponse,
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use axum_prometheus::{
@@ -21,6 +23,7 @@ use tracing::{debug, info, warn};
 
 use crate::config::Config;
 use crate::crypto::CryptoService;
+use crate::error::AppError;
 use crate::handlers;
 use crate::kms::KmsClient;
 use crate::repository::DataRepository;
@@ -28,6 +31,14 @@ use crate::rpc::NoxClient;
 
 const ENDPOINT_VERSION: &str = "/v0";
 const VERSIONED_PATHS: &str = "/v0/{*path}";
+
+/// Wall-clock ceiling on `/`, `/health`, and `/metrics`.
+///
+/// Not configurable, and independent of [`crate::config::ServerConfig::request_timeout`]:
+/// these routes touch no external dependency — not even the KMS client, whose own
+/// saturation only ever affects `versioned_routes` — so anything slower than a few seconds
+/// here is a stuck process or a client dribbling out its request, never legitimate work.
+const SERVICE_ROUTE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Shared application state injected into every Axum handler via [`State`].
 #[derive(Clone)]
@@ -63,10 +74,17 @@ impl Application {
     }
 
     /// Builds the Axum [`Router`] with all routes, middleware layers, and shared state.
+    ///
+    /// Timeouts are attached per route group *before* the shared layers, which puts them
+    /// innermost. That ordering is load-bearing: the trace, CORS, and Prometheus layers all
+    /// sit outside, so each observes the 408 response. Were the timeout outermost instead,
+    /// elapsing would drop their futures and a timed-out request would go unlogged and
+    /// uncounted.
     fn build_router(
         state: AppState,
         prometheus_layer: PrometheusMetricLayer<'static>,
         cors_allowed_headers: Vec<HeaderName>,
+        request_timeout: Duration,
     ) -> Router {
         debug!("Building application router");
 
@@ -88,18 +106,51 @@ impl Application {
             .route(
                 "/secrets/{handle}",
                 get(handlers::get_handle_crypto_material),
-            );
+            )
+            .layer(middleware::from_fn(move |request, next| {
+                Self::enforce_timeout(request_timeout, request, next)
+            }));
 
-        Router::new()
+        let service_routes = Router::new()
             .route("/", get(Self::root))
             .route("/health", get(Self::health_check))
             .route("/metrics", get(Self::metrics))
+            .layer(middleware::from_fn(move |request, next| {
+                Self::enforce_timeout(SERVICE_ROUTE_TIMEOUT, request, next)
+            }));
+
+        Router::new()
+            .merge(service_routes)
             .nest(ENDPOINT_VERSION, versioned_routes)
             .fallback(Self::not_found)
             .with_state(state)
             .layer(TraceLayer::new_for_http())
             .layer(cors)
             .layer(prometheus_layer)
+    }
+
+    /// Abandons a request that exceeds `limit`, answering [`AppError::Timeout`] (408).
+    ///
+    /// Bounds everything the handler does, including body extraction, time queued on the KMS
+    /// semaphore, and the S3 and delegate calls made once a permit is granted. The KMS
+    /// semaphore wait is separately bounded by [`crate::kms::KmsClient`]'s own acquire
+    /// timeout, but that only covers the queueing, not the request as a whole — this
+    /// middleware is what keeps the total, end to end, from exceeding `limit`.
+    ///
+    /// Returning [`AppError`] rather than using `tower_http::timeout::TimeoutLayer` is
+    /// deliberate: that layer answers with an empty body, whereas callers get the same
+    /// `{"error", "message"}` envelope here as for every other rejection.
+    ///
+    /// Does not cover a slow response body, nor the TCP accept and TLS handshake, neither of
+    /// which is reached through this middleware.
+    async fn enforce_timeout(
+        limit: Duration,
+        request: Request,
+        next: Next,
+    ) -> Result<Response, AppError> {
+        tokio::time::timeout(limit, next.run(request))
+            .await
+            .map_err(|_| AppError::Timeout)
     }
 
     /// Initialises all dependencies and runs the HTTP server until a shutdown signal.
@@ -198,7 +249,12 @@ impl Application {
         let listener = TcpListener::bind(address).await?;
         axum::serve(
             listener,
-            Self::build_router(state, prometheus_layer, cors_allowed_headers),
+            Self::build_router(
+                state,
+                prometheus_layer,
+                cors_allowed_headers,
+                self.config.server.request_timeout,
+            ),
         )
         .with_graceful_shutdown(Self::shutdown_signal())
         .await?;
@@ -263,5 +319,74 @@ impl Application {
         }
 
         warn!("Shutdown signal received, cleaning up...");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::{Body, to_bytes};
+    use axum::http::Request as HttpRequest;
+    use tower::ServiceExt;
+
+    /// Outlives any limit these tests set, so it only ever completes by being timed out.
+    async fn slow_handler() -> &'static str {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        "unreachable"
+    }
+
+    async fn fast_handler() -> &'static str {
+        "ok"
+    }
+
+    /// Mirrors how [`Application::build_router`] attaches the timeout: innermost, wrapping
+    /// the routes only.
+    fn router(limit: Duration) -> Router {
+        Router::new()
+            .route("/slow", get(slow_handler))
+            .route("/fast", get(fast_handler))
+            .layer(middleware::from_fn(move |request, next| {
+                Application::enforce_timeout(limit, request, next)
+            }))
+    }
+
+    /// Named `send` rather than `get` so it does not shadow [`axum::routing::get`] above.
+    async fn send(uri: &str, limit: Duration) -> Response {
+        router(limit)
+            .oneshot(
+                HttpRequest::builder()
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("router is infallible")
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn handler_exceeding_the_limit_answers_408() {
+        let response = send("/slow", Duration::from_secs(1)).await;
+
+        assert_eq!(StatusCode::REQUEST_TIMEOUT, response.status());
+    }
+
+    /// The whole reason this is a `from_fn` rather than `tower_http::timeout::TimeoutLayer`:
+    /// the 408 carries the same envelope as every other error instead of an empty body.
+    #[tokio::test(start_paused = true)]
+    async fn timeout_response_carries_the_standard_error_envelope() {
+        let response = send("/slow", Duration::from_secs(1)).await;
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        let json: Value = serde_json::from_slice(&body).expect("body should be JSON");
+        assert_eq!("timeout", json["error"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn handler_within_the_limit_is_untouched() {
+        let response = send("/fast", Duration::from_secs(1)).await;
+
+        assert_eq!(StatusCode::OK, response.status());
     }
 }

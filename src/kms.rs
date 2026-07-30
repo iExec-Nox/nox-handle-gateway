@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use alloy::{
     primitives::{Address, B256, hex},
@@ -10,7 +11,7 @@ use k256::elliptic_curve::rand_core::{OsRng, RngCore};
 use reqwest::{Client, header::AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::sync::Semaphore;
+use tokio::{sync::Semaphore, time::timeout};
 use tracing::{debug, error, info};
 
 use crate::config::KmsConfig;
@@ -26,9 +27,9 @@ use crate::types::{
 /// one sample.
 ///
 /// Counts attempts rather than requests that reached the wire: a call that fails earlier —
-/// an [`Error::Signing`] failure while building the EIP-712 authorization, or a closed
-/// semaphore — still records a sample, under whichever label [`Error::metric_status`]
-/// assigns it. [`KMS_STATUSES`] lists the full label set.
+/// an [`Error::Signing`] failure while building the EIP-712 authorization, a saturated
+/// concurrency cap, or a closed semaphore — still records a sample, under whichever label
+/// [`Error::metric_status`] assigns it. [`KMS_STATUSES`] lists the full label set.
 const KMS_REQUESTS_TOTAL: &str = "nox_handle_gateway_kms_requests_total";
 
 /// Delegate calls currently in flight against the KMS, across every endpoint and chain.
@@ -44,17 +45,22 @@ const KMS_STATUS_UNAVAILABLE: &str = "UNAVAILABLE";
 const KMS_STATUS_INVALID_RESPONSE: &str = "INVALID_RESPONSE";
 const KMS_STATUS_INVALID_SIGNATURE: &str = "INVALID_SIGNATURE";
 const KMS_STATUS_SIGNING_ERROR: &str = "SIGNING_ERROR";
+/// Kept distinct from [`KMS_STATUS_UNAVAILABLE`] on purpose: this one means *we* ran out of
+/// capacity, not that the KMS is down. Conflating them would make a local backpressure event
+/// page the KMS owners.
+const KMS_STATUS_SATURATED: &str = "SATURATED";
 
 /// Every `status` label reported on [`KMS_REQUESTS_TOTAL`].
 ///
 /// Used by [`KmsClient::init_metrics`] to publish each series at zero on startup, so
 /// dashboards and ratio-based alerts have a denominator before the first failure occurs.
-const KMS_STATUSES: [&str; 5] = [
+const KMS_STATUSES: [&str; 6] = [
     KMS_STATUS_SUCCESS,
     KMS_STATUS_UNAVAILABLE,
     KMS_STATUS_INVALID_RESPONSE,
     KMS_STATUS_INVALID_SIGNATURE,
     KMS_STATUS_SIGNING_ERROR,
+    KMS_STATUS_SATURATED,
 ];
 
 /// Errors returned by [`KmsClient`] operations.
@@ -68,6 +74,15 @@ pub enum Error {
     InvalidResponseSignature(String),
     #[error("KMS unavailable: {0}")]
     Unavailable(String),
+    /// Gave up waiting for a [`KmsClient::semaphore`] permit — every slot was held for
+    /// longer than the wait ceiling.
+    ///
+    /// Distinct from [`Error::Unavailable`] because the KMS itself may be perfectly healthy;
+    /// what ran out is our own concurrency budget. Both answer 503, so a caller retries
+    /// either way, but only this one points at `kms.max_concurrent_requests` as the thing to
+    /// raise.
+    #[error("KMS concurrency limit saturated: no permit within {0:?}")]
+    Saturated(Duration),
     #[error("Signing error: {0}")]
     Signing(String),
 }
@@ -86,6 +101,7 @@ impl Error {
             Error::InvalidResponse(_) => KMS_STATUS_INVALID_RESPONSE,
             Error::InvalidResponseSignature(_) => KMS_STATUS_INVALID_SIGNATURE,
             Error::Unavailable(_) => KMS_STATUS_UNAVAILABLE,
+            Error::Saturated(_) => KMS_STATUS_SATURATED,
             Error::Signing(_) => KMS_STATUS_SIGNING_ERROR,
         }
     }
@@ -129,6 +145,15 @@ pub struct KmsClient {
     pub kms_signer_address: Address,
     /// Shared by every clone of this client, so the cap is global rather than per-clone.
     semaphore: Arc<Semaphore>,
+    /// How long to wait for a [`Self::semaphore`] permit before giving up with
+    /// [`Error::Saturated`].
+    ///
+    /// Set to [`KmsConfig::timeout`] rather than a knob of its own, which keeps the worst
+    /// case provably inside the server's request ceiling: waiting one KMS timeout and then
+    /// spending one more on the call itself is 2 × 10s by default, comfortably under the 30s
+    /// `server.request_timeout`. A separate, larger value could exceed it and turn a 503 into
+    /// a 408.
+    acquire_timeout: Duration,
 }
 
 /// Keeps [`KMS_INFLIGHT`] accurate for the lifetime of a single delegate call.
@@ -172,6 +197,7 @@ impl KmsClient {
             base_url: config.url.trim_end_matches('/').to_string(),
             kms_signer_address: config.signer_address,
             semaphore,
+            acquire_timeout: config.timeout,
         })
     }
 
@@ -210,8 +236,12 @@ impl KmsClient {
         // Held across the delegate call and released on drop, so the cap bounds concurrent
         // calls rather than total calls. Matched rather than `?`-propagated to keep the
         // "exactly one KMS_REQUESTS_TOTAL sample per call" invariant below intact.
-        let result = match self.semaphore.acquire().await {
-            Ok(_permit) => {
+        //
+        // The wait is bounded so a saturated cap sheds load with a 503 instead of parking the
+        // caller until the server's global request timeout answers 408 — which would report a
+        // client-side problem for what is entirely a server-side one.
+        let result = match timeout(self.acquire_timeout, self.semaphore.acquire()).await {
+            Ok(Ok(_permit)) => {
                 let _inflight = InflightGuard::enter();
                 self.delegate(handle, ephemeral_pub_key, target_pub_key, signer, chain_id)
                     .await
@@ -219,7 +249,8 @@ impl KmsClient {
             // Unreachable today: the semaphore is owned by this client and never closed.
             // Surfaced as `Unavailable` (503) so a future `close()` degrades instead of
             // silently succeeding.
-            Err(err) => Err(Error::Unavailable(format!("KMS semaphore closed: {err}"))),
+            Ok(Err(err)) => Err(Error::Unavailable(format!("KMS semaphore closed: {err}"))),
+            Err(_) => Err(Error::Saturated(self.acquire_timeout)),
         };
 
         let status = match &result {
@@ -378,5 +409,60 @@ impl KmsClient {
             })?;
 
         Ok(hex::encode_prefixed(signature.as_bytes()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::address;
+
+    /// Points at a port nothing listens on: reaching the network at all is a test failure,
+    /// and these cases must fail before the request is ever built.
+    fn config(max_concurrent_requests: usize) -> KmsConfig {
+        KmsConfig {
+            url: "http://127.0.0.1:1".to_string(),
+            connect_timeout: Duration::from_secs(3),
+            max_concurrent_requests,
+            timeout: Duration::from_secs(10),
+            signer_address: address!("0xD60BB0381d2712863e241F003349591475E0b961"),
+        }
+    }
+
+    async fn delegate_with_all_permits_held(client: &KmsClient) -> Error {
+        let _held = client
+            .semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("the only permit should be free");
+
+        client
+            .get_encrypted_shared_secret("0x00", "0x00", "0x00", &PrivateKeySigner::random(), 31337)
+            .await
+            .expect_err("no permit is available, so this cannot succeed")
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn saturated_semaphore_reports_saturation_rather_than_unavailability() {
+        let client = KmsClient::new(&config(1)).expect("client should build");
+
+        let err = delegate_with_all_permits_held(&client).await;
+
+        assert!(
+            matches!(err, Error::Saturated(_)),
+            "expected Saturated, got {err:?}"
+        );
+    }
+
+    /// The point of the separate variant: an operator can tell "raise
+    /// `max_concurrent_requests`" apart from "the KMS is down" on the metric alone.
+    #[tokio::test(start_paused = true)]
+    async fn saturation_is_labelled_apart_from_kms_outage() {
+        let client = KmsClient::new(&config(1)).expect("client should build");
+
+        let err = delegate_with_all_permits_held(&client).await;
+
+        assert_eq!(KMS_STATUS_SATURATED, err.metric_status());
     }
 }

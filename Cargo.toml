@@ -34,3 +34,7 @@ validator = { version = "0.20.0", features = ["derive"] }
 
 [dev-dependencies]
 temp-env = "0.3.6"
+# `start_paused` for instant, deterministic timeout tests. Not part of tokio's "full".
+tokio = { version = "1.52.3", features = ["test-util"] }
+# `ServiceExt::oneshot`, to drive a Router in tests without binding a listener.
+tower = { version = "0.5.3", features = ["util"] }
