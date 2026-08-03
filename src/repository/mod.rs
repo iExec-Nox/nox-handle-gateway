@@ -153,6 +153,18 @@ impl DataRepository {
         Ok(Self { repos })
     }
 
+    /// Builds a [`DataRepository`] with no configured chains, skipping the S3
+    /// bucket validation that [`DataRepository::new`] performs.
+    ///
+    /// For handler-level tests that never reach a repository call — every
+    /// lookup fails with [`RepositoryError::UnknownChain`].
+    #[cfg(test)]
+    pub(crate) fn empty_for_test() -> Self {
+        Self {
+            repos: HashMap::new(),
+        }
+    }
+
     fn repo_for_chain(&self, chain_id: u32) -> Result<&BucketRepository, RepositoryError> {
         self.repos
             .get(&chain_id)

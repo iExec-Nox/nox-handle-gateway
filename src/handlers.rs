@@ -30,6 +30,26 @@ use crate::types::{DataAccessAuthorization, DecryptionProof, Handle, HandleProof
 use crate::validation::{chain_id_from_handle, decode_and_validate_value, parse_handle};
 
 const HANDLE_GATEWAY_COMPUTE_ERROR_TOTAL: &str = "nox_handle_gateway_compute_error_total";
+/// Counts every request to `GET /v0/secrets/{handle}` that passes the token
+/// validity-window checks and reaches signature verification. Denominator for the
+/// ERC-1271 fallback rate (`HANDLE_GATEWAY_ERC1271_CALLS_TOTAL` / this counter) — the
+/// per-route request counter from `axum-prometheus` is not usable for that ratio
+/// since it also counts requests rejected before verification (malformed JSON,
+/// expired token, unconfigured `chain_id`).
+const HANDLE_GATEWAY_SIGNATURE_VERIFICATION_TOTAL: &str =
+    "nox_handle_gateway_signature_verification_total";
+/// Counts ERC-1271 fallback calls made by `GET /v0/secrets/{handle}`, labelled by
+/// outcome. Only incremented when the fallback is actually attempted, i.e. after
+/// `isViewer` has already passed — see [`get_handle_crypto_material`].
+const HANDLE_GATEWAY_ERC1271_CALLS_TOTAL: &str = "nox_handle_gateway_erc1271_calls_total";
+const ERC1271_OUTCOME_SUCCESS: &str = "success";
+const ERC1271_OUTCOME_INVALID: &str = "invalid";
+const ERC1271_OUTCOME_RPC_ERROR: &str = "rpc_error";
+const ERC1271_OUTCOMES: [&str; 3] = [
+    ERC1271_OUTCOME_SUCCESS,
+    ERC1271_OUTCOME_INVALID,
+    ERC1271_OUTCOME_RPC_ERROR,
+];
 /// EIP-712 domain name for HandleProof generation.
 const NOX_COMPUTE_EIP712_DOMAIN_NAME: &str = "NoxCompute";
 /// EIP-712 domain name for DataAccessAuthorization validation.
@@ -98,6 +118,12 @@ pub(crate) fn init_metrics(chain_id: u32) {
         .absolute(0);
     counter!(HANDLE_GATEWAY_COMPUTE_ERROR_TOTAL, "chain_id" => chain_id.clone(), "reason" => "NOT_DECRYPTED")
         .absolute(0);
+    counter!(HANDLE_GATEWAY_SIGNATURE_VERIFICATION_TOTAL, "chain_id" => chain_id.clone())
+        .absolute(0);
+    for outcome in ERC1271_OUTCOMES {
+        counter!(HANDLE_GATEWAY_ERC1271_CALLS_TOTAL, "chain_id" => chain_id.clone(), "outcome" => outcome)
+            .absolute(0);
+    }
 }
 
 /// Encrypts a plaintext value and stores it under a freshly generated handle.
@@ -226,9 +252,12 @@ pub async fn create_handle(
 /// Decodes the `Authorization: EIP712 <base64>` header and enforces the token's
 /// `notBefore`/`expiresAt` window first to avoid unnecessary cryptographic work
 /// on expired tokens. Then recovers the signer address from the EIP-712 signature;
-/// for EOA callers the recovered address must match `userAddress`, for Smart Account
-/// callers an ERC-1271 fallback is attempted by calling `isValidSignature` on the
-/// contract at `userAddress`. Finally `isViewer` is checked on-chain and the stored
+/// for EOA callers the recovered address must match `userAddress`. `isViewer` is
+/// checked on-chain next — a caller who is not a viewer of this handle is rejected
+/// immediately, before any ERC-1271 call, so an attacker cannot use `userAddress` to
+/// force an expensive or attacker-steerable `eth_call` for free. Only if `isViewer`
+/// passes and the EOA recovery did not match is the ERC-1271 fallback attempted, by
+/// calling `isValidSignature` on the contract at `userAddress`. Finally the stored
 /// ciphertext with a KMS-delegated re-encrypted shared secret are returned.
 ///
 /// # HTTP responses
@@ -295,6 +324,10 @@ pub async fn get_handle_crypto_material(
         ));
     }
 
+    let chain_id_label = chain_id.to_string();
+    counter!(HANDLE_GATEWAY_SIGNATURE_VERIFICATION_TOTAL, "chain_id" => chain_id_label.clone())
+        .increment(1);
+
     let auth_domain = eip712_domain! {
         name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
         version: "1",
@@ -305,6 +338,7 @@ pub async fn get_handle_crypto_material(
     let signature_bytes =
         hex::decode(&authorization.signature).map_err(|e| AppError::Unauthorized(e.to_string()))?;
 
+    let user_address = payload.userAddress.to_string();
     let is_valid_ec_sig = match Signature::from_raw(&signature_bytes) {
         Ok(sig) => match sig.recover_address_from_prehash(&hash) {
             Ok(address) => {
@@ -312,7 +346,7 @@ pub async fn get_handle_crypto_material(
                 if !is_valid {
                     warn!(
                         handle,
-                        user = payload.userAddress.to_string(),
+                        user = user_address,
                         recovered = address.to_string(),
                         "Recovered address does not match userAddress in payload",
                     );
@@ -322,7 +356,7 @@ pub async fn get_handle_crypto_material(
             Err(e) => {
                 warn!(
                     handle,
-                    user = payload.userAddress.to_string(),
+                    user = user_address,
                     "Failed to recover address from signature: {e}",
                 );
                 false
@@ -331,7 +365,7 @@ pub async fn get_handle_crypto_material(
         Err(e) => {
             warn!(
                 handle,
-                user = payload.userAddress.to_string(),
+                user = user_address,
                 "EC signature recovery failed: {e}",
             );
             false
@@ -339,31 +373,35 @@ pub async fn get_handle_crypto_material(
     };
 
     let nox_client = &state.nox_clients[&chain_id];
-    if !is_valid_ec_sig {
-        warn!(
-            handle,
-            user = payload.userAddress.to_string(),
-            "attempting ERC-1271 fallback",
-        );
-        let is_valid_signature = nox_client
-            .verify_erc1271(hash, &signature_bytes, payload.userAddress)
-            .await?;
-        if !is_valid_signature {
-            warn!(
-                handle,
-                user = payload.userAddress.to_string(),
-                "ERC-1271 signature is invalid",
-            );
-            return Err(AppError::Unauthorized("invalid signature".to_string()));
-        }
-    }
 
     let handle_b256 = parse_handle(&handle)?;
     let has_access = nox_client
         .check_access(handle_b256, payload.userAddress)
         .await?;
     if !has_access {
+        info!(handle, user = user_address, "no viewer permissions");
         return Err(AppError::AccessDenied("not a viewer".to_string()));
+    }
+
+    if !is_valid_ec_sig {
+        warn!(handle, user = user_address, "attempting ERC-1271 fallback");
+        let is_valid_signature = nox_client
+            .verify_erc1271(hash, &signature_bytes, payload.userAddress)
+            .await
+            .inspect_err(|_| {
+                counter!(HANDLE_GATEWAY_ERC1271_CALLS_TOTAL, "chain_id" => chain_id_label.clone(), "outcome" => ERC1271_OUTCOME_RPC_ERROR)
+                    .increment(1);
+            })?;
+        counter!(
+            HANDLE_GATEWAY_ERC1271_CALLS_TOTAL,
+            "chain_id" => chain_id_label.clone(),
+            "outcome" => if is_valid_signature { ERC1271_OUTCOME_SUCCESS } else { ERC1271_OUTCOME_INVALID }
+        )
+        .increment(1);
+        if !is_valid_signature {
+            warn!(handle, user = user_address, "ERC-1271 signature is invalid");
+            return Err(AppError::Unauthorized("invalid signature".to_string()));
+        }
     }
 
     let entry = state
@@ -1054,4 +1092,512 @@ fn recover_and_check_address(
         return Err(AppError::Unauthorized("invalid signature".to_string()));
     }
     Ok(())
+}
+
+/// Regression tests for the ordering fix in [`get_handle_crypto_material`]:
+/// `isViewer` must be checked, and reject, before the ERC-1271 fallback is ever
+/// attempted (see ENG-1689). These exercise the real handler function directly
+/// (Axum extractors are plain public tuple structs, so no router/`oneshot` is
+/// needed) against a minimal hand-rolled JSON-RPC double, since the codebase has
+/// no existing mock for `NoxClient`, the S3 repository, or the KMS HTTP client.
+#[cfg(test)]
+mod get_handle_crypto_material_tests {
+    use super::*;
+
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    use std::time::Duration;
+
+    use alloy::primitives::address;
+    use axum::http::HeaderValue;
+    use axum_prometheus::{
+        Handle as MetricsHandle, MakeDefaultHandle, metrics_exporter_prometheus::PrometheusHandle,
+    };
+    use k256::{ecdh::EphemeralSecret, elliptic_curve::rand_core::OsRng};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+
+    use crate::config::{
+        Config, KmsConfig, PerChainConfig, S3Config, ServerConfig, default_rpc_call_timeout,
+        default_rpc_connect_timeout,
+    };
+    use crate::crypto::CryptoService;
+    use crate::repository::DataRepository;
+    use crate::rpc::NoxClient;
+
+    const CHAIN_ID: u32 = 31337;
+
+    /// Installs the global Prometheus recorder at most once per test binary —
+    /// `Handle::default()` panics if `metrics::set_global_recorder` runs twice.
+    fn shared_metrics_handle() -> PrometheusHandle {
+        static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
+        HANDLE
+            .get_or_init(|| MetricsHandle::make_default_handle(MetricsHandle::default()))
+            .clone()
+    }
+
+    fn dummy_kms_config() -> KmsConfig {
+        KmsConfig {
+            url: "http://127.0.0.1:1".to_string(),
+            connect_timeout: Duration::from_secs(1),
+            max_concurrent_requests: 1,
+            timeout: Duration::from_secs(1),
+            signer_address: Address::from([0x11; 20]),
+        }
+    }
+
+    /// A minimal hand-rolled JSON-RPC-over-HTTP double. Answers `eth_call` by
+    /// inspecting the target (`to`) address rather than decoding the ABI
+    /// selector: `isViewer` always targets `nox_address` (the configured
+    /// NoxCompute contract) while the ERC-1271 fallback always targets
+    /// `payload.userAddress` — a different address by construction — so routing
+    /// on `to` alone is enough to answer each call correctly.
+    struct MockRpc {
+        nox_address: Address,
+        erc1271_address: Address,
+        is_viewer: bool,
+        erc1271_valid: bool,
+    }
+
+    impl MockRpc {
+        /// Starts the mock server in the background and returns its base URL
+        /// plus the ordered log of `to` addresses it has answered `eth_call` for.
+        async fn spawn(self) -> (String, Arc<Mutex<Vec<Address>>>) {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("mock rpc listener should bind");
+            let url = format!(
+                "http://{}",
+                listener.local_addr().expect("listener has local addr")
+            );
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let calls_for_task = Arc::clone(&calls);
+
+            tokio::spawn(async move {
+                loop {
+                    let Ok((socket, _)) = listener.accept().await else {
+                        return;
+                    };
+                    self.handle_connection(socket, &calls_for_task).await;
+                }
+            });
+
+            (url, calls)
+        }
+
+        async fn handle_connection(&self, mut socket: TcpStream, calls: &Arc<Mutex<Vec<Address>>>) {
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let header_end = loop {
+                let n = socket.read(&mut chunk).await.unwrap_or(0);
+                if n == 0 {
+                    return;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break pos;
+                }
+            };
+            let headers = String::from_utf8_lossy(&buf[..header_end]).to_lowercase();
+            let content_length: usize = headers
+                .lines()
+                .find_map(|l| l.strip_prefix("content-length:"))
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(0);
+            let mut body = buf[header_end + 4..].to_vec();
+            while body.len() < content_length {
+                let n = socket.read(&mut chunk).await.unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                body.extend_from_slice(&chunk[..n]);
+            }
+
+            let request: serde_json::Value =
+                serde_json::from_slice(&body).expect("mock rpc should receive valid JSON-RPC");
+            let id = request["id"].clone();
+            let to: Address = request["params"][0]["to"]
+                .as_str()
+                .expect("eth_call request should carry a target address")
+                .parse()
+                .expect("target address should be valid hex");
+            calls
+                .lock()
+                .expect("calls lock should not be poisoned")
+                .push(to);
+
+            let result = if to == self.nox_address {
+                format!("0x{:0>64}", if self.is_viewer { "1" } else { "0" })
+            } else if to == self.erc1271_address {
+                if self.erc1271_valid {
+                    format!("0x1626ba7e{}", "0".repeat(56))
+                } else {
+                    format!("0x00000000{}", "0".repeat(56))
+                }
+            } else {
+                panic!("mock rpc received an eth_call for an unexpected address: {to}");
+            };
+
+            let response_body =
+                serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result }).to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body,
+            );
+            let _ = socket.write_all(response.as_bytes()).await;
+            let _ = socket.shutdown().await;
+        }
+    }
+
+    /// Builds an [`AppState`] with a single configured chain, its `NoxClient`
+    /// pointed at `rpc_url`, and every other dependency wired to a value that
+    /// type-checks but is never exercised: none of the three scenarios below get
+    /// past the RPC checks to the repository or the KMS delegate call.
+    async fn build_app_state(nox_address: Address, rpc_url: &str) -> AppState {
+        let nox_client = NoxClient::new(
+            rpc_url,
+            default_rpc_call_timeout(),
+            default_rpc_connect_timeout(),
+            nox_address,
+        )
+        .await
+        .expect("nox client should build against the mock rpc url");
+
+        let crypto_svc = CryptoService::new(HashMap::from([(
+            CHAIN_ID,
+            EphemeralSecret::random(&mut OsRng).public_key(),
+        )]))
+        .expect("crypto service should build with one protocol key");
+
+        AppState {
+            nox_clients: HashMap::from([(CHAIN_ID, nox_client)]),
+            config: Config {
+                server: ServerConfig {
+                    host: "127.0.0.1".to_string(),
+                    port: 0,
+                    cors_allowed_headers: Vec::new(),
+                    request_timeout: Duration::from_secs(30),
+                },
+                chains: HashMap::from([(
+                    CHAIN_ID,
+                    PerChainConfig {
+                        call_timeout: Duration::from_secs(1),
+                        connect_timeout: Duration::from_secs(1),
+                        nox_compute_contract_address: nox_address,
+                        rpc_url: rpc_url.to_string(),
+                        s3: S3Config {
+                            access_key: "unused".to_string(),
+                            secret_key: "unused".to_string(),
+                            bucket: "unused".to_string(),
+                            endpoint_url: None,
+                            object_lock_enabled: false,
+                            region: "unused".to_string(),
+                            timeout: 5,
+                        },
+                        wallet_key: "unused".to_string(),
+                    },
+                )]),
+                kms: dummy_kms_config(),
+                runner_address: Address::from([0x22; 20]),
+                compute_max_operands_per_request: 5,
+                s3_max_concurrent_requests: 1,
+                s3_max_handles_per_request: 1,
+            },
+            crypto_svc,
+            kms_client: KmsClient::new(&dummy_kms_config()).expect("kms client should build"),
+            metrics_handle: shared_metrics_handle(),
+            repository: DataRepository::empty_for_test(),
+            signers: HashMap::from([(CHAIN_ID, PrivateKeySigner::random())]),
+        }
+    }
+
+    /// Builds a handle hex string that routes to [`CHAIN_ID`].
+    fn test_handle() -> String {
+        hex::encode_prefixed(Handle::new(CHAIN_ID, SolidityType::Bool).to_bytes())
+    }
+
+    fn empty_query() -> QueryParams {
+        QueryParams {
+            chain_id: None,
+            salt: None,
+        }
+    }
+
+    /// Signs `userAddress` under the Handle Gateway EIP-712 domain with `signer`,
+    /// producing the base64 `Authorization: EIP712 <...>` header value that
+    /// [`extract_authorization`] expects.
+    fn sign_authorization(
+        signer: &PrivateKeySigner,
+        user_address: Address,
+        nox_address: Address,
+    ) -> HeaderMap {
+        let now = Utc::now().timestamp() as u64;
+        let not_before = now - 60;
+        let expires_at = now + 60;
+
+        let payload = DataAccessAuthorization {
+            userAddress: user_address,
+            encryptionPubKey: "unused".to_string(),
+            notBefore: U256::from(not_before),
+            expiresAt: U256::from(expires_at),
+        };
+        let domain = eip712_domain! {
+            name: HANDLE_GATEWAY_EIP712_DOMAIN_NAME,
+            version: "1",
+            chain_id: u64::from(CHAIN_ID),
+            verifying_contract: nox_address,
+        };
+        let signature = signer
+            .sign_typed_data_sync(&payload, &domain)
+            .expect("signing should succeed");
+
+        let body = serde_json::json!({
+            "payload": {
+                "userAddress": user_address.to_string(),
+                "encryptionPubKey": "unused",
+                "notBefore": not_before,
+                "expiresAt": expires_at,
+            },
+            "signature": hex::encode_prefixed(signature.as_bytes()),
+        })
+        .to_string();
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("EIP712 {}", STANDARD.encode(body)))
+                .expect("header value should be valid"),
+        );
+        headers
+    }
+
+    /// Valid EOA signature, but `userAddress` is not a viewer of the handle: the
+    /// `isViewer` check must reject with 403 before any ERC-1271 call is attempted.
+    #[tokio::test]
+    async fn non_viewer_with_valid_eoa_signature_is_rejected_without_erc1271_call() {
+        let nox_address = address!("0x0000000000000000000000000000000000000001");
+        let erc1271_address = address!("0x0000000000000000000000000000000000000002");
+        let (rpc_url, calls) = MockRpc {
+            nox_address,
+            erc1271_address,
+            is_viewer: false,
+            erc1271_valid: true,
+        }
+        .spawn()
+        .await;
+        let state = build_app_state(nox_address, &rpc_url).await;
+        let signer = PrivateKeySigner::random();
+        let headers = sign_authorization(&signer, signer.address(), nox_address);
+
+        let result = get_handle_crypto_material(
+            Path(test_handle()),
+            State(state),
+            Query(empty_query()),
+            headers,
+        )
+        .await
+        .map(|_json| ());
+
+        assert!(
+            matches!(result, Err(AppError::AccessDenied(_))),
+            "expected AccessDenied, got {result:?}"
+        );
+        let calls = calls.lock().unwrap();
+        assert_eq!(
+            1,
+            calls.len(),
+            "expected exactly one eth_call, got {calls:?}"
+        );
+        assert!(
+            !calls.contains(&erc1271_address),
+            "erc1271 must not be called for a non-viewer"
+        );
+    }
+
+    /// The regression test for the amplification vector this commit closes: a
+    /// deliberately wrong signature plus a non-viewer `userAddress` pointing at
+    /// an (attacker-controlled) contract must be rejected by `isViewer` alone —
+    /// the gateway must never attempt the attacker-steerable ERC-1271 call.
+    #[tokio::test]
+    async fn non_viewer_with_wrong_signature_and_contract_address_never_triggers_erc1271() {
+        let nox_address = address!("0x0000000000000000000000000000000000000001");
+        let attacker_contract_address = address!("0x0000000000000000000000000000000000000003");
+        let (rpc_url, calls) = MockRpc {
+            nox_address,
+            erc1271_address: attacker_contract_address,
+            is_viewer: false,
+            erc1271_valid: true,
+        }
+        .spawn()
+        .await;
+        let state = build_app_state(nox_address, &rpc_url).await;
+        // Signed by an unrelated key: recovery will not match `attacker_contract_address`.
+        let unrelated_signer = PrivateKeySigner::random();
+        let headers = sign_authorization(&unrelated_signer, attacker_contract_address, nox_address);
+
+        let result = get_handle_crypto_material(
+            Path(test_handle()),
+            State(state),
+            Query(empty_query()),
+            headers,
+        )
+        .await
+        .map(|_json| ());
+
+        assert!(
+            matches!(result, Err(AppError::AccessDenied(_))),
+            "expected AccessDenied, got {result:?}"
+        );
+        let calls = calls.lock().unwrap();
+        assert_eq!(
+            1,
+            calls.len(),
+            "expected exactly one eth_call, got {calls:?}"
+        );
+        assert!(
+            !calls.contains(&attacker_contract_address),
+            "the attacker-controlled contract must never be called: RPC amplification vector reopened"
+        );
+    }
+
+    /// A viewer whose EOA signature doesn't match falls through to the ERC-1271
+    /// fallback (since `isViewer` passed); an invalid ERC-1271 response is still
+    /// rejected with 401, after both RPC calls have been made.
+    #[tokio::test]
+    async fn viewer_with_wrong_signature_and_invalid_erc1271_response_is_unauthorized() {
+        let nox_address = address!("0x0000000000000000000000000000000000000001");
+        let smart_wallet_address = address!("0x0000000000000000000000000000000000000004");
+        let (rpc_url, calls) = MockRpc {
+            nox_address,
+            erc1271_address: smart_wallet_address,
+            is_viewer: true,
+            erc1271_valid: false,
+        }
+        .spawn()
+        .await;
+        let state = build_app_state(nox_address, &rpc_url).await;
+        let unrelated_signer = PrivateKeySigner::random();
+        let headers = sign_authorization(&unrelated_signer, smart_wallet_address, nox_address);
+
+        let result = get_handle_crypto_material(
+            Path(test_handle()),
+            State(state),
+            Query(empty_query()),
+            headers,
+        )
+        .await
+        .map(|_json| ());
+
+        assert!(
+            matches!(result, Err(AppError::Unauthorized(_))),
+            "expected Unauthorized, got {result:?}"
+        );
+        let calls = calls.lock().unwrap();
+        assert_eq!(
+            2,
+            calls.len(),
+            "expected isViewer then isValidSignature, got {calls:?}"
+        );
+        assert_eq!(nox_address, calls[0], "isViewer should be checked first");
+        assert_eq!(
+            smart_wallet_address, calls[1],
+            "isValidSignature should follow"
+        );
+    }
+
+    /// A viewer whose EOA signature doesn't match, but whose smart wallet's
+    /// ERC-1271 signature is valid, clears both RPC checks and reaches the
+    /// repository layer. The test `DataRepository` has no configured chains, so
+    /// [`RepositoryError::UnknownChain`] surfaces there — collapsed by
+    /// [`crate::repository::DataRepository::fetch_handle`] into `NotFound`, since
+    /// an unconfigured chain means the handle cannot exist. That 404 (rather than
+    /// a 403/401) is the proof that authorization succeeded: this is the one
+    /// scenario among the four that must NOT stop at the ACL/signature gate.
+    #[tokio::test]
+    async fn viewer_with_valid_erc1271_signature_clears_authorization() {
+        let nox_address = address!("0x0000000000000000000000000000000000000001");
+        let smart_wallet_address = address!("0x0000000000000000000000000000000000000005");
+        let (rpc_url, calls) = MockRpc {
+            nox_address,
+            erc1271_address: smart_wallet_address,
+            is_viewer: true,
+            erc1271_valid: true,
+        }
+        .spawn()
+        .await;
+        let state = build_app_state(nox_address, &rpc_url).await;
+        let unrelated_signer = PrivateKeySigner::random();
+        let headers = sign_authorization(&unrelated_signer, smart_wallet_address, nox_address);
+
+        let result = get_handle_crypto_material(
+            Path(test_handle()),
+            State(state),
+            Query(empty_query()),
+            headers,
+        )
+        .await
+        .map(|_json| ());
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "expected NotFound once authorization clears (no chain configured in the test repository), got {result:?}"
+        );
+        let calls = calls.lock().unwrap();
+        assert_eq!(
+            2,
+            calls.len(),
+            "expected isViewer then isValidSignature, got {calls:?}"
+        );
+        assert_eq!(nox_address, calls[0], "isViewer should be checked first");
+        assert_eq!(
+            smart_wallet_address, calls[1],
+            "isValidSignature should follow"
+        );
+    }
+
+    /// A viewer whose EOA signature matches `userAddress` clears authorization
+    /// after `isViewer` alone — `is_valid_ec_sig` is true, so the ERC-1271
+    /// fallback branch is never entered at all, not merely gated by `isViewer`.
+    /// This is the common, cheapest path: a legitimate EOA caller with access.
+    #[tokio::test]
+    async fn viewer_with_valid_eoa_signature_never_triggers_erc1271() {
+        let nox_address = address!("0x0000000000000000000000000000000000000001");
+        let erc1271_address = address!("0x0000000000000000000000000000000000000006");
+        let (rpc_url, calls) = MockRpc {
+            nox_address,
+            erc1271_address,
+            is_viewer: true,
+            erc1271_valid: true,
+        }
+        .spawn()
+        .await;
+        let state = build_app_state(nox_address, &rpc_url).await;
+        let signer = PrivateKeySigner::random();
+        let headers = sign_authorization(&signer, signer.address(), nox_address);
+
+        let result = get_handle_crypto_material(
+            Path(test_handle()),
+            State(state),
+            Query(empty_query()),
+            headers,
+        )
+        .await
+        .map(|_json| ());
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "expected NotFound once authorization clears (no chain configured in the test repository), got {result:?}"
+        );
+        let calls = calls.lock().unwrap();
+        assert_eq!(
+            1,
+            calls.len(),
+            "expected exactly one eth_call, got {calls:?}"
+        );
+        assert!(
+            !calls.contains(&erc1271_address),
+            "erc1271 must not be called when the EOA signature already matches"
+        );
+    }
 }
