@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.7.0](https://github.com/iExec-Nox/nox-handle-gateway/compare/v0.6.0...v0.7.0) (2026-08-04)
+
+
+### Features
+
+* add slsa attest ([#91](https://github.com/iExec-Nox/nox-handle-gateway/issues/91)) ([0fb9484](https://github.com/iExec-Nox/nox-handle-gateway/commit/0fb9484c76ed7f3e0ccf89b77580c9b34a25cb57))
+
+
+### Bug Fixes
+
+* avoid sensitive data leakage in logs or HTTP responses ([#90](https://github.com/iExec-Nox/nox-handle-gateway/issues/90)) ([bc0e283](https://github.com/iExec-Nox/nox-handle-gateway/commit/bc0e283e48b15c2db10f7c830255bb664440be9f))
+* cap operand count and add defensive semaphore ([#93](https://github.com/iExec-Nox/nox-handle-gateway/issues/93)) ([a7379bb](https://github.com/iExec-Nox/nox-handle-gateway/commit/a7379bbb38bf6731d5bf5e7aadf2c2f4d545023b))
+* check handle ACL earlier to mitigate attack through free ERC-1271 eth_call ([#95](https://github.com/iExec-Nox/nox-handle-gateway/issues/95)) ([3d03aa0](https://github.com/iExec-Nox/nox-handle-gateway/commit/3d03aa04f64105356fa4d01b6057fe27a5aee211))
+* define timeouts for Ethereum RPC reqwest client ([#88](https://github.com/iExec-Nox/nox-handle-gateway/issues/88)) ([28d1f64](https://github.com/iExec-Nox/nox-handle-gateway/commit/28d1f64959f5803986b9eeed49d33c66e7a67450))
+* define timeouts for KMS reqwest client ([#82](https://github.com/iExec-Nox/nox-handle-gateway/issues/82)) ([9cfdb7f](https://github.com/iExec-Nox/nox-handle-gateway/commit/9cfdb7f0d08ff807b2ae64cc8b33d22595bb9695))
+* do not drop KMS error silently when fetching compute operands ([#92](https://github.com/iExec-Nox/nox-handle-gateway/issues/92)) ([5d4ed38](https://github.com/iExec-Nox/nox-handle-gateway/commit/5d4ed38358209fb271f1ba17c1a246a3a0947ff8))
+* enforce a global HTTP request timeout and bound KMS semaphore waits ([#94](https://github.com/iExec-Nox/nox-handle-gateway/issues/94)) ([ad328c2](https://github.com/iExec-Nox/nox-handle-gateway/commit/ad328c29f9bed663e424c413c141721dc99d14e2))
+* **kms:** return 500 instead of 400 for kms InvalidResponse ([#86](https://github.com/iExec-Nox/nox-handle-gateway/issues/86)) ([0249cf7](https://github.com/iExec-Nox/nox-handle-gateway/commit/0249cf7056f1297ef0b4102aa589a728f3b3be5a))
+
 ## [0.6.0](https://github.com/iExec-Nox/nox-handle-gateway/compare/v0.5.0...v0.6.0) (2026-06-02)
 
 
