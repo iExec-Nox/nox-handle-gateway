@@ -8,27 +8,13 @@
 //! Serving decryption requests requires a valid EIP-712
 //! [`DataAccessAuthorization`] signed by the handle owner, plus an on-chain
 //! ACL check against the NoxCompute contract.
-//!
-//! [`HandleProof`]: crate::types::HandleProof
-//! [`DataAccessAuthorization`]: crate::types::DataAccessAuthorization
-
-pub mod application;
-pub mod config;
-pub mod crypto;
-pub mod error;
-pub mod handlers;
-pub mod kms;
-pub mod repository;
-pub mod rpc;
-pub mod types;
-pub mod validation;
 
 use tracing::{debug, error};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use validator::Validate;
 
-use crate::application::Application;
-use crate::config::Config;
+use nox_handle_gateway::application::Application;
+use nox_handle_gateway::config::Config;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
